@@ -29,9 +29,16 @@ class _ProjectListPageState extends State<ProjectListPage> {
           if (byName.containsKey(head.toLowerCase()))
             byName[head.toLowerCase()]!,
       ];
+      final fixedNames = DatabaseService.fixedOperationHeads
+          .map((name) => name.toLowerCase())
+          .toSet();
+      final custom = projects
+          .where((project) => !fixedNames.contains(project.name.toLowerCase()))
+          .toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       if (!mounted) return;
       setState(() {
-        _projects = fixed;
+        _projects = [...fixed, ...custom];
         _loading = false;
       });
     } catch (e) {
@@ -56,6 +63,15 @@ class _ProjectListPageState extends State<ProjectListPage> {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ReportsHubPage(initialProject: initialProject),
+      ),
+    );
+    await _loadProjects();
+  }
+
+  Future<void> _openInvoiceList() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const ReceiptHistoryPage(),
       ),
     );
     await _loadProjects();
@@ -119,9 +135,6 @@ class _ProjectListPageState extends State<ProjectListPage> {
 
   Future<void> _createProjectFromDialog() async {
     final name = TextEditingController();
-    final address = TextEditingController();
-    final budget = TextEditingController();
-    final notes = TextEditingController();
 
     final draft = await showDialog<Project>(
       context: context,
@@ -137,27 +150,6 @@ class _ProjectListPageState extends State<ProjectListPage> {
                 textCapitalization: TextCapitalization.words,
                 decoration:
                     const InputDecoration(labelText: 'Operation name *'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: address,
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(labelText: 'Address'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: budget,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Budget',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: notes,
-                maxLines: 2,
-                decoration: const InputDecoration(labelText: 'Notes'),
               ),
             ],
           ),
@@ -175,10 +167,6 @@ class _ProjectListPageState extends State<ProjectListPage> {
                 ctx,
                 Project(
                   name: trimmedName,
-                  address:
-                      address.text.trim().isEmpty ? null : address.text.trim(),
-                  budget: double.tryParse(budget.text),
-                  notes: notes.text.trim().isEmpty ? null : notes.text.trim(),
                 ),
               );
             },
@@ -190,9 +178,6 @@ class _ProjectListPageState extends State<ProjectListPage> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       name.dispose();
-      address.dispose();
-      budget.dispose();
-      notes.dispose();
     });
 
     if (draft == null) return;
@@ -242,6 +227,11 @@ class _ProjectListPageState extends State<ProjectListPage> {
             tooltip: 'Intake',
           ),
           topAction(
+            onPressed: _openInvoiceList,
+            icon: Icons.receipt_long_outlined,
+            tooltip: 'Invoice list',
+          ),
+          topAction(
             onPressed: _openReportsHub,
             icon: Icons.insights_outlined,
             tooltip: 'Reports hub',
@@ -266,27 +256,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
                   ),
                   const SizedBox(height: 12),
                   _buildHeroHeader(),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.camera_alt_outlined,
-                        size: 22,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Select an operation to begin scanning',
-                          style: TextStyle(
-                            fontSize: 18,
-                            color: colorScheme.onSurface,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   if (_projects.isEmpty)
                     _buildEmptyState()
                   else
@@ -312,6 +282,14 @@ class _ProjectListPageState extends State<ProjectListPage> {
           ),
           child: Row(
             children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _createProjectFromDialog,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add'),
+                ),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: FilledButton.icon(
                   onPressed: SystemNavigator.pop,
@@ -352,17 +330,6 @@ class _ProjectListPageState extends State<ProjectListPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Center(
-            child: Text(
-              'Summary Total',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: colorScheme.onPrimary,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 18,
-                  ),
-            ),
-          ),
-          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
@@ -451,7 +418,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Please restart the app to re-seed the 10 fixed operation heads.',
+            'Please restart the app to re-seed the fixed operation heads.',
             textAlign: TextAlign.center,
             style: TextStyle(color: colorScheme.onSurfaceVariant),
           ),
@@ -482,14 +449,8 @@ class _ProjectCard extends StatelessWidget {
     ];
     final accent =
         accents[(project.id ?? project.name.length) % accents.length];
-    final budget = project.budget;
     final total = project.totalGross;
     final totalText = NumberFormat('#,##0.00').format(total);
-    final subtitle = [
-      if (project.address != null) project.address!,
-      if (budget != null) '${budget.toStringAsFixed(2)} budget',
-    ].join(' • ');
-
     return Card(
       margin: EdgeInsets.zero,
       child: InkWell(
@@ -502,15 +463,15 @@ class _ProjectCard extends StatelessWidget {
               left: BorderSide(color: accent, width: 3),
             ),
           ),
-          padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+          padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
                   Container(
-                    height: 6,
-                    width: 52,
+                    height: 5,
+                    width: 44,
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         colors: [accent, accent.withValues(alpha: 0.45)],
@@ -522,52 +483,45 @@ class _ProjectCard extends StatelessWidget {
                   Text(
                     '${project.receiptCount} receipts',
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: 11.5,
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Row(
                 children: [
                   Expanded(
-                    child: Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: project.name,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            project.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 19,
+                              fontSize: 16.5,
                               fontWeight: FontWeight.w700,
                               color: colorScheme.onSurface,
                             ),
                           ),
-                          TextSpan(
-                            text: ' : $totalText',
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w800,
-                              color: colorScheme.onSurface,
-                            ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          totalText,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            fontSize: 16.5,
+                            fontWeight: FontWeight.w800,
+                            color: colorScheme.onSurface,
                           ),
-                        ],
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-              if (subtitle.isNotEmpty) ...[
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13, color: colorScheme.outline),
-                ),
-              ],
             ],
           ),
         ),

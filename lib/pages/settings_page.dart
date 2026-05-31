@@ -407,9 +407,9 @@ class _SettingsPageState extends State<SettingsPage> {
     final result = await Navigator.of(context).push<String>(
       MaterialPageRoute(builder: (_) => const _ActivationKeyPage()),
     );
-    if (!mounted || result == null || result == 'CANCEL') return;
+    if (!context.mounted || result == null || result == 'CANCEL') return;
     await _loadActivationStatus();
-    if (!mounted) return;
+    if (!context.mounted) return;
     _showMessage(
       context,
       result == 'CLEARED'
@@ -821,11 +821,6 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<Project?> _showEditOperationDialog(
       BuildContext context, Project project) async {
     final name = TextEditingController(text: project.name);
-    final address = TextEditingController(text: project.address ?? '');
-    final budget = TextEditingController(
-      text: project.budget == null ? '' : project.budget!.toStringAsFixed(2),
-    );
-    final notes = TextEditingController(text: project.notes ?? '');
 
     final result = await showDialog<Project>(
       context: context,
@@ -841,27 +836,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 textCapitalization: TextCapitalization.words,
                 decoration:
                     const InputDecoration(labelText: 'Operation name *'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: address,
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(labelText: 'Address'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: budget,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Budget',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: notes,
-                maxLines: 2,
-                decoration: const InputDecoration(labelText: 'Notes'),
               ),
             ],
           ),
@@ -880,10 +854,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 Project(
                   id: project.id,
                   name: trimmedName,
-                  address:
-                      address.text.trim().isEmpty ? null : address.text.trim(),
-                  budget: double.tryParse(budget.text),
-                  notes: notes.text.trim().isEmpty ? null : notes.text.trim(),
                   createdAt: project.createdAt,
                   updatedAt: project.updatedAt,
                 ),
@@ -897,9 +867,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       name.dispose();
-      address.dispose();
-      budget.dispose();
-      notes.dispose();
     });
 
     return result;

@@ -34,7 +34,6 @@ import 'package:sqflite/sqflite.dart';
 import 'database_service.dart';
 import 'export_service.dart';
 import 'gemini_service.dart';
-import 'utils/ai_extraction_helpers.dart';
 import 'utils/text_normalizers.dart';
 
 part 'pages/splash_page.dart';
@@ -47,7 +46,6 @@ part 'pages/receipt_entry/receipt_entry_scan_controller.dart';
 part 'pages/receipt_entry/receipt_entry_scan_fast_controller.dart';
 part 'pages/receipt_entry/receipt_entry_scan_quality_controller.dart';
 part 'pages/receipt_entry/receipt_entry_view_sections.dart';
-part 'pages/category_manager_page.dart';
 part 'pages/gemini_settings_page.dart';
 part 'pages/receipt_history_page.dart';
 part 'pages/reports_hub_page.dart';
