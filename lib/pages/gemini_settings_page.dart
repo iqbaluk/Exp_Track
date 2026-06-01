@@ -11,7 +11,7 @@ class _GeminiSettingsPageState extends State<GeminiSettingsPage> {
   final _apiKeyController = TextEditingController();
   final _modelController = TextEditingController();
   late List<String> _modelOptions;
-  String _scanMode = GeminiService.scanModeFast;
+  String _scanMode = GeminiService.scanModeFastV2;
   bool _loading = true;
   bool _saving = false;
   bool _testing = false;

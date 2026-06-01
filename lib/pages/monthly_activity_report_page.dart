@@ -174,11 +174,11 @@ class _MonthlyActivityReportPageState extends State<MonthlyActivityReportPage> {
 
   String get _scopeName {
     if (widget.project != null) return widget.project!.name;
-    if (_selectedProjectId == null) return 'All operations';
+    if (_selectedProjectId == null) return 'All accounts';
     for (final project in _projects) {
       if (project.id == _selectedProjectId) return project.name;
     }
-    return 'All operations';
+    return 'All accounts';
   }
 
   Future<void> _showMonthlyExportMenu() async {
@@ -416,12 +416,12 @@ class _MonthlyActivityReportPageState extends State<MonthlyActivityReportPage> {
                                   isExpanded: true,
                                   isDense: true,
                                   decoration: const InputDecoration(
-                                    labelText: 'Operation',
+                                    labelText: 'Account',
                                   ),
                                   items: [
                                     const DropdownMenuItem<int?>(
                                       value: null,
-                                      child: Text('All operations'),
+                                      child: Text('All accounts'),
                                     ),
                                     ..._projects.where((p) => p.id != null).map(
                                           (p) => DropdownMenuItem<int?>(

@@ -45,7 +45,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
       if (!mounted) return;
       setState(() => _loading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not load operations: $e')),
+        SnackBar(content: Text('Could not load accounts: $e')),
       );
     }
   }
@@ -94,7 +94,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
     );
     if (!mounted || selected == null) return;
     if (_projects.isEmpty) {
-      _showProjectMessage('No operation heads found. Reopen app to re-seed.');
+      _showProjectMessage('No account heads found. Reopen app to re-seed.');
       return;
     }
 
@@ -105,7 +105,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
       targetProject = await showDialog<Project>(
         context: context,
         builder: (ctx) => SimpleDialog(
-          title: const Text('Select operation'),
+          title: const Text('Select account'),
           children: _projects
               .map(
                 (project) => SimpleDialogOption(
@@ -139,7 +139,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
     final draft = await showDialog<Project>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Create operation'),
+        title: const Text('Create account'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -149,7 +149,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
                 autofocus: true,
                 textCapitalization: TextCapitalization.words,
                 decoration:
-                    const InputDecoration(labelText: 'Operation name *'),
+                    const InputDecoration(labelText: 'Account name *'),
               ),
             ],
           ),
@@ -188,7 +188,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
       if (!mounted) return;
       await _openProject(created);
     } catch (e) {
-      _showProjectMessage('Could not create operation: $e');
+      _showProjectMessage('Could not create account: $e');
     }
   }
 
@@ -251,7 +251,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
                 children: [
                   buildPageTitleBanner(
                     context,
-                    title: 'Operations',
+                    title: 'Accounts',
                     icon: Icons.business_center_outlined,
                   ),
                   const SizedBox(height: 12),
@@ -409,7 +409,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
           ),
           const SizedBox(height: 14),
           Text(
-            'No operation heads found',
+            'No account heads found',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w800,
@@ -418,7 +418,7 @@ class _ProjectListPageState extends State<ProjectListPage> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Please restart the app to re-seed the fixed operation heads.',
+            'Please restart the app to re-seed the fixed account heads.',
             textAlign: TextAlign.center,
             style: TextStyle(color: colorScheme.onSurfaceVariant),
           ),

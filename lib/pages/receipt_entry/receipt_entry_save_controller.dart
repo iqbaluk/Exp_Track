@@ -40,6 +40,15 @@ extension _ReceiptEntrySaveController on _ReceiptEntryPageState {
     }
     final canProceed = await _confirmLowCategoryConfidenceBeforeSave();
     if (!canProceed) return;
+    final paymentMode = _selectedPaymentMode;
+    if (paymentMode == null || paymentMode.isEmpty) {
+      _showStatus(
+        'Please select payment mode (Bank or Cash).',
+        isError: true,
+      );
+      await _ensurePaymentModeSelected();
+      return;
+    }
     final saveCategory = _selectedCategory ?? _resolveDefaultCategory();
     if (saveCategory == null) {
       _showStatus(
@@ -133,6 +142,7 @@ extension _ReceiptEntrySaveController on _ReceiptEntryPageState {
         gross: gross,
         paidAmount: paid,
         net: double.tryParse(_netController.text) ?? 0,
+        paymentMode: paymentMode,
         notes: notesWithFlag,
       );
 

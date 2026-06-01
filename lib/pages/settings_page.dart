@@ -150,7 +150,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: Text('Reset database',
                       style: TextStyle(color: colorScheme.error)),
                   subtitle: const Text(
-                      'Delete receipts and photos (operations are kept)'),
+                      'Delete receipts and photos (accounts are kept)'),
                   trailing: const Icon(Icons.chevron_right, size: 20),
                   onTap: () => _confirmReset(context),
                 ),
@@ -158,25 +158,25 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const SizedBox(height: 24),
-          const _SectionHeader(title: 'Operations'),
+          const _SectionHeader(title: 'Accounts'),
           Card(
             child: Column(
               children: [
                 ListTile(
                   leading: Icon(Icons.edit, color: colorScheme.primary),
-                  title: const Text('Edit operation'),
+                  title: const Text('Edit account'),
                   subtitle:
-                      const Text('Select an operation and edit its details'),
+                      const Text('Select an account and edit its details'),
                   trailing: const Icon(Icons.chevron_right, size: 20),
                   onTap: () => _editOperationFromManagement(context),
                 ),
                 _SettingsDivider(),
                 ListTile(
                   leading: Icon(Icons.delete_outline, color: colorScheme.error),
-                  title: Text('Delete operation',
+                  title: Text('Delete account',
                       style: TextStyle(color: colorScheme.error)),
                   subtitle: const Text(
-                      'Select an operation and remove it if no receipts exist'),
+                      'Select an account and remove it if no receipts exist'),
                   trailing: const Icon(Icons.chevron_right, size: 20),
                   onTap: () => _deleteOperationFromManagement(context),
                 ),
@@ -706,7 +706,7 @@ class _SettingsPageState extends State<SettingsPage> {
         icon: Icon(Icons.warning_amber, color: Colors.orange.shade700),
         title: const Text('Backup recommended'),
         content: const Text(
-          'Before reset, please create a backup. Reset will delete receipts and images only; operations will be kept.',
+          'Before reset, please create a backup. Reset will delete receipts and images only; accounts will be kept.',
         ),
         actions: [
           TextButton(
@@ -738,7 +738,7 @@ class _SettingsPageState extends State<SettingsPage> {
         title: const Text('Final warning'),
         content: const Text(
           'All receipts and images will be removed from this system.\n'
-          'Operations will be kept.\n\n'
+          'Accounts will be kept.\n\n'
           'This action cannot be undone.',
         ),
         actions: [
@@ -761,7 +761,7 @@ class _SettingsPageState extends State<SettingsPage> {
       await DatabaseService.clearEverything();
       if (!context.mounted) return;
       _showMessage(context,
-          'Reset complete. Receipts and images removed; operations kept.');
+          'Reset complete. Receipts and images removed; accounts kept.');
       Navigator.of(context).pop();
     } catch (e) {
       if (!context.mounted) return;
@@ -776,7 +776,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final projects = await DatabaseService.getProjects();
     if (!context.mounted) return null;
     if (projects.isEmpty) {
-      _showMessage(context, 'No operations available.');
+      _showMessage(context, 'No accounts available.');
       return null;
     }
     return showDialog<Project>(
@@ -801,7 +801,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _editOperationFromManagement(BuildContext context) async {
     final project = await _pickOperation(
       context,
-      title: 'Select operation to edit',
+      title: 'Select account to edit',
     );
     if (project == null || !context.mounted) return;
 
@@ -811,10 +811,10 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       await DatabaseService.updateProject(updated);
       if (!context.mounted) return;
-      _showMessage(context, 'Operation updated.');
+      _showMessage(context, 'Account updated.');
     } catch (e) {
       if (!context.mounted) return;
-      _showMessage(context, 'Could not update operation: $e');
+      _showMessage(context, 'Could not update account: $e');
     }
   }
 
@@ -825,7 +825,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final result = await showDialog<Project>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Edit operation'),
+        title: const Text('Edit account'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -835,7 +835,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 autofocus: true,
                 textCapitalization: TextCapitalization.words,
                 decoration:
-                    const InputDecoration(labelText: 'Operation name *'),
+                    const InputDecoration(labelText: 'Account name *'),
               ),
             ],
           ),
@@ -875,16 +875,16 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _deleteOperationFromManagement(BuildContext context) async {
     final project = await _pickOperation(
       context,
-      title: 'Select operation to delete',
+      title: 'Select account to delete',
     );
     if (project == null || !context.mounted) return;
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete operation?'),
+        title: const Text('Delete account?'),
         content: Text(
-          'Delete "${project.name}"?\n\nOperations with saved receipts cannot be deleted until their receipts are removed.',
+          'Delete "${project.name}"?\n\nAccounts with saved receipts cannot be deleted until their receipts are removed.',
         ),
         actions: [
           TextButton(
@@ -906,7 +906,7 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       await DatabaseService.deleteProject(project);
       if (!context.mounted) return;
-      _showMessage(context, 'Operation deleted.');
+      _showMessage(context, 'Account deleted.');
     } catch (e) {
       if (!context.mounted) return;
       _showMessage(
@@ -1042,7 +1042,7 @@ class _SettingsPageState extends State<SettingsPage> {
       probeDb = await openDatabase(dbPath, readOnly: true);
       const requiredTables = <String>[
         'tbl_receipts',
-        'tbl_projects',
+        'tbl_accounts',
       ];
       for (final table in requiredTables) {
         final tableRows = await probeDb.rawQuery(
@@ -1054,7 +1054,7 @@ class _SettingsPageState extends State<SettingsPage> {
         }
       }
       await probeDb.rawQuery('SELECT COUNT(*) FROM tbl_receipts');
-      await probeDb.rawQuery('SELECT COUNT(*) FROM tbl_projects');
+      await probeDb.rawQuery('SELECT COUNT(*) FROM tbl_accounts');
     } catch (_) {
       throw StateError('Backup database is corrupted or incompatible.');
     } finally {

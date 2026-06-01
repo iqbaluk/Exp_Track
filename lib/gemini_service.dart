@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Gemini Service - Isolated, failure-safe API wrapper
 // ============================================================
 // This file is the ONLY place that talks to Gemini.
@@ -16,7 +16,11 @@ import 'package:image/image.dart' as img;
 import 'utils/ai_extraction_helpers.dart';
 
 part 'scan/gemini_fast_scan_executor.dart';
+part 'scan/gemini_handwritten_scan_executor.dart';
 part 'scan/gemini_quality_scan_executor.dart';
+part 'scan/gemini_fast_prompt.dart';
+part 'scan/gemini_quality_prompt.dart';
+part 'scan/gemini_handwritten_prompt.dart';
 
 /// The result of a scan attempt - either success with data, or failure with reason.
 class ScanResult {
@@ -39,9 +43,6 @@ class ReceiptData {
   final DateTime? date;
   final String? invoiceNumber;
   final String? supplier;
-  final String? category;
-  final double? categoryConfidence;
-  final String? categoryReason;
   final double? vat;
   final double? gross;
   final double? paidAmount;
@@ -53,9 +54,6 @@ class ReceiptData {
     this.date,
     this.invoiceNumber,
     this.supplier,
-    this.category,
-    this.categoryConfidence,
-    this.categoryReason,
     this.vat,
     this.gross,
     this.paidAmount,
@@ -68,9 +66,6 @@ class ReceiptData {
     DateTime? date,
     String? invoiceNumber,
     String? supplier,
-    String? category,
-    double? categoryConfidence,
-    String? categoryReason,
     double? vat,
     double? gross,
     double? paidAmount,
@@ -82,9 +77,6 @@ class ReceiptData {
       date: date ?? this.date,
       invoiceNumber: invoiceNumber ?? this.invoiceNumber,
       supplier: supplier ?? this.supplier,
-      category: category ?? this.category,
-      categoryConfidence: categoryConfidence ?? this.categoryConfidence,
-      categoryReason: categoryReason ?? this.categoryReason,
       vat: vat ?? this.vat,
       gross: gross ?? this.gross,
       paidAmount: paidAmount ?? this.paidAmount,
@@ -150,30 +142,22 @@ class ScanTelemetry {
 }
 
 class GeminiService {
-  static const String _propertyBusinessClassificationGuide = '''
-Property-business classification rules (applies when business profile indicates property buy/renovate/sell):
-1) If a cost is directly tied to a specific property purchase, renovation, legal compliance, or sale transaction, treat it as a direct project cost (not office overhead).
-2) Merchant type alone is not sufficient; prioritize line-item/service meaning and property/address context.
-3) For professional services tied to a specific property/project (e.g., Party Wall services, structural/survey tied to one address), prefer acquisition/selling or direct project cost style subcategories over generic indirect/professional overhead.
-4) Prefer precise extraction of invoice facts; avoid guessed classifications.
-''';
-  static const String defaultModel = 'gemini-2.5-flash-lite';
+  static const String defaultModel = 'gemini-2.5-pro';
   static const List<String> selectableModels = [
     'gemini-3.5-flash',
     'gemini-3.1-pro-preview',
+    'gemini-3.1-flash',
     'gemini-3.1-flash-lite',
     'gemini-2.5-pro',
     'gemini-2.5-flash-lite',
     'gemini-2.5-flash',
-    'gemini-1.5-pro',
-    'gemini-1.5-flash',
   ];
   static const List<String> fallbackModels = [
     'gemini-3.5-flash',
+    'gemini-3.1-flash',
     'gemini-3.1-flash-lite',
     'gemini-2.5-flash-lite',
     'gemini-2.5-flash',
-    'gemini-1.5-flash',
   ];
   static const _apiKeyStorageKey = 'gemini_api_key';
   static const _modelStorageKey = 'gemini_model';
@@ -181,8 +165,10 @@ Property-business classification rules (applies when business profile indicates 
   static const _modelOptionsStorageKey = 'gemini_model_options_json';
   static const _lastScanModelStorageKey = 'gemini_last_scan_model';
   static ScanTelemetry? _lastScanTelemetry;
-  static const String scanModeFast = 'fast';
+  static const String scanModeFast = 'fast'; // legacy alias -> fast_v2
+  static const String scanModeFastV2 = 'fast_v2';
   static const String scanModeAccurate = 'accurate';
+  static const String scanModeHandwritten = 'handwritten';
   static const FlutterSecureStorage _storage = FlutterSecureStorage();
   // Dev-only compile-time fallback key. Keep empty for production builds.
   static const String _builtInDevApiKey =
@@ -242,9 +228,12 @@ Property-business classification rules (applies when business profile indicates 
       final mode =
           (await _storage.read(key: _scanModeStorageKey))?.trim() ?? '';
       if (mode == scanModeAccurate) return scanModeAccurate;
-      return scanModeFast;
+      if (mode == scanModeFastV2) return scanModeFastV2;
+      if (mode == scanModeHandwritten) return scanModeHandwritten;
+      if (mode == scanModeFast) return scanModeFastV2;
+      return scanModeFastV2;
     } catch (_) {
-      return scanModeFast;
+      return scanModeFastV2;
     }
   }
 
@@ -257,6 +246,7 @@ Property-business classification rules (applies when business profile indicates 
       final values = decoded
           .map((e) => e.toString().trim())
           .where((e) => e.isNotEmpty)
+          .where(_isSupportedModelOption)
           .toSet()
           .toList();
       if (values.isEmpty) return List<String>.from(selectableModels);
@@ -270,6 +260,7 @@ Property-business classification rules (applies when business profile indicates 
     final sanitized = options
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
+        .where(_isSupportedModelOption)
         .toSet()
         .toList();
     if (sanitized.isEmpty) {
@@ -376,8 +367,13 @@ Property-business classification rules (applies when business profile indicates 
       await _storage.write(key: _apiKeyStorageKey, value: trimmedKey);
     }
     await _storage.write(key: _modelStorageKey, value: trimmedModel);
-    final normalizedMode =
-        scanMode == scanModeAccurate ? scanModeAccurate : scanModeFast;
+    final normalizedMode = switch (scanMode) {
+      scanModeAccurate => scanModeAccurate,
+      scanModeHandwritten => scanModeHandwritten,
+      scanModeFastV2 => scanModeFastV2,
+      scanModeFast => scanModeFastV2,
+      _ => scanModeFastV2,
+    };
     await _storage.write(key: _scanModeStorageKey, value: normalizedMode);
   }
 
@@ -487,22 +483,24 @@ Property-business classification rules (applies when business profile indicates 
   static Future<ScanResult> scanReceipt(
     Uint8List imageBytes, {
     String? imagePath,
-    String? businessNature,
-    String? businessDescription,
     String? scanModeOverride,
     String? qualityUserHint,
     Uint8List? fastPreparedBytes,
   }) async {
+    final totalStopwatch = Stopwatch()..start();
+    final settingsStopwatch = Stopwatch()..start();
     // ---- Pre-flight checks ----
     final settings = await loadSettings();
+    settingsStopwatch.stop();
     final mode = (scanModeOverride?.trim().isNotEmpty ?? false)
         ? scanModeOverride!.trim()
         : settings.scanMode;
-    final fastMode = mode == scanModeFast;
-    final effectiveModel = _resolveModelForMode(
-      configuredModel: settings.model,
-      fastMode: fastMode,
-    );
+    final normalizedMode = mode == scanModeFast ? scanModeFastV2 : mode;
+    final fastV2Mode = normalizedMode == scanModeFastV2;
+    final fastMode = fastV2Mode;
+    final handwrittenMode = normalizedMode == scanModeHandwritten;
+    final effectiveModel =
+        _resolveModelForMode(settings.model, fastMode: fastMode);
     var apiCalls = 0;
     if (effectiveModel != settings.model) {
       debugPrint(
@@ -549,14 +547,21 @@ Property-business classification rules (applies when business profile indicates 
     }
 
     try {
-      final totalStopwatch = Stopwatch()..start();
       String aiMimeType = 'image/jpeg';
       Uint8List aiImageBytes = imageBytes;
       debugPrint('SCAN_TIMING ocr_ms=0');
-      if (fastMode) {
+      final prepStopwatch = Stopwatch()..start();
+      if (fastV2Mode) {
         final prepared = await _prepareFastModeInput(
           imageBytes: imageBytes,
           fastPreparedBytes: fastPreparedBytes,
+        );
+        aiImageBytes = prepared.bytes;
+        aiMimeType = prepared.mimeType;
+      } else if (handwrittenMode) {
+        final prepared = await _prepareHandwrittenModeInput(
+          imageBytes: imageBytes,
+          imagePath: imagePath,
         );
         aiImageBytes = prepared.bytes;
         aiMimeType = prepared.mimeType;
@@ -568,40 +573,40 @@ Property-business classification rules (applies when business profile indicates 
         aiImageBytes = prepared.bytes;
         aiMimeType = prepared.mimeType;
       }
+      prepStopwatch.stop();
 
       // ---- Build the model ----
       final model = GenerativeModel(
         model: effectiveModel,
         apiKey: settings.apiKey,
         generationConfig: GenerationConfig(
-          temperature: fastMode ? 0.0 : 0.1, // Fast single-pass deterministic
+          temperature: 0.1,
           responseMimeType: 'application/json', // Force JSON response
         ),
       );
 
       // ---- Build the prompt ----
-      final businessContextLine = [
-        businessNature?.trim() ?? '',
-        businessDescription?.trim() ?? '',
-      ].where((v) => v.isNotEmpty).join(' | ');
-      final prompt = fastMode
+      final prompt = fastV2Mode
           ? _buildFastPrompt(
-              businessContextLine: businessContextLine,
               userHint: qualityUserHint,
             )
-          : _buildQualityPromptCompact(
-              businessContextLine: businessContextLine,
+          : normalizedMode == scanModeHandwritten
+              ? _buildHandwrittenPrompt(
+                  userHint: qualityUserHint,
+                )
+              : _buildQualityPromptCompact(
               userHint: qualityUserHint,
             );
       debugPrint(
-        'SCAN_PROMPT mode=$mode model=$effectiveModel context_len=${businessContextLine.length} hint_len=${qualityUserHint?.length ?? 0}',
+        'SCAN_PROMPT mode=$mode model=$effectiveModel hint_len=${qualityUserHint?.length ?? 0}',
       );
+      _logLongDebug('SCAN_PROMPT_TEXT mode=$mode', prompt);
 
       // ---- Send the image with a timeout ----
       final primaryStopwatch = Stopwatch()..start();
       apiCalls++;
       final fastTimeoutSeconds =
-          fastMode ? _fastTimeoutForModel(effectiveModel) : 25;
+          fastV2Mode ? _fastTimeoutForModel(effectiveModel) : 25;
       final response = await model.generateContent([
         Content.multi([
           TextPart(prompt),
@@ -610,7 +615,7 @@ Property-business classification rules (applies when business profile indicates 
       ]).timeout(
         Duration(seconds: fastTimeoutSeconds),
         onTimeout: () => throw TimeoutException(
-          fastMode
+          fastV2Mode
               ? 'Gemini took too long to respond (>${fastTimeoutSeconds}s)'
               : 'Gemini took too long to respond (>25s)',
         ),
@@ -636,7 +641,9 @@ Property-business classification rules (applies when business profile indicates 
           text.length > 1500 ? '${text.substring(0, 1500)}...' : text;
       debugPrint('SCAN_RAW_RESPONSE mode=$mode text=$rawPreview');
 
+      final parseStopwatch = Stopwatch()..start();
       final parsed = _parseJsonResponse(text);
+      parseStopwatch.stop();
       if (!parsed.success || parsed.data == null) {
         debugPrint('SCAN_RESULT parse_failed');
         _recordScanTelemetry(
@@ -647,38 +654,32 @@ Property-business classification rules (applies when business profile indicates 
         );
         return parsed;
       }
-
       var patchedData = parsed.data!;
-      if (fastMode) {
+      final postProcessStopwatch = Stopwatch()..start();
+      var runFallbackEnhancements = !fastV2Mode;
+      if (fastV2Mode) {
         patchedData = _applyFastModePostProcess(patchedData);
+        final fastCriticalValid = _isFastCriticalValid(patchedData);
         final needsAmountRescue = _needsFastAmountRescue(patchedData);
         debugPrint(
-          'FAST_AMOUNT_RESCUE needed=$needsAmountRescue gross=${patchedData.gross} vat=${patchedData.vat} net=${patchedData.net} paid=${patchedData.paidAmount}',
+          'FAST_VALIDATE critical_ok=$fastCriticalValid amount_ok=${!needsAmountRescue} gross=${patchedData.gross} vat=${patchedData.vat} net=${patchedData.net} paid=${patchedData.paidAmount}',
         );
-        if (needsAmountRescue) {
-          apiCalls++;
-          final rescue = await _rescueLowQualityExtraction(
-            apiKey: settings.apiKey,
-            modelName: effectiveModel,
-            imageBytes: aiImageBytes,
-            imageMimeType: aiMimeType,
-            ocrText: null,
-            businessNature: businessNature,
-            businessDescription: businessDescription,
-            timeoutSeconds: 8,
+        if (!fastCriticalValid || needsAmountRescue) {
+          debugPrint(
+            'FAST_V2_SINGLE_PASS warning=validation_failed_no_fallback reason=${!fastCriticalValid ? 'missing_critical' : 'amount_inconsistent'}',
           );
-          if (rescue != null) {
-            final merged = _mergeFastAmountsWithRescue(patchedData, rescue);
-            final replaced = merged.gross != patchedData.gross ||
-                merged.vat != patchedData.vat ||
-                merged.net != patchedData.net ||
-                merged.paidAmount != patchedData.paidAmount;
-            patchedData = merged;
-            debugPrint('FAST_AMOUNT_RESCUE merged=$replaced');
-          } else {
-            debugPrint('FAST_AMOUNT_RESCUE merged=false');
-          }
         }
+      } else if (handwrittenMode) {
+        final handwrittenResult = await _applyHandwrittenModePostProcess(
+          data: patchedData,
+          settings: settings,
+          effectiveModel: effectiveModel,
+          aiImageBytes: aiImageBytes,
+          aiMimeType: aiMimeType,
+          apiCalls: apiCalls,
+        );
+        patchedData = handwrittenResult.data;
+        apiCalls = handwrittenResult.apiCalls;
       } else {
         final qualityResult = await _applyQualityModePostProcess(
           data: patchedData,
@@ -686,16 +687,59 @@ Property-business classification rules (applies when business profile indicates 
           effectiveModel: effectiveModel,
           aiImageBytes: aiImageBytes,
           aiMimeType: aiMimeType,
-          businessNature: businessNature,
-          businessDescription: businessDescription,
           apiCalls: apiCalls,
         );
         patchedData = qualityResult.data;
         apiCalls = qualityResult.apiCalls;
       }
+      postProcessStopwatch.stop();
+
+      final ocrFallbackStopwatch = Stopwatch()..start();
+      if (runFallbackEnhancements) {
+        if ((patchedData.paidAmount == null || patchedData.paidAmount! <= 0) &&
+            imagePath != null &&
+            imagePath.trim().isNotEmpty) {
+          final snapshot = await _extractOcrSnapshotFromImagePath(imagePath);
+          if (snapshot != null) {
+            final paidFromOcr = _extractPaidAmountByRegex(snapshot.fullText);
+            if (paidFromOcr != null && paidFromOcr > 0) {
+              patchedData = patchedData.copyWith(
+                paidAmount: paidFromOcr,
+                extractionWarnings: <String>[
+                  ...patchedData.extractionWarnings,
+                  'Paid amount recovered from OCR fallback',
+                ],
+              );
+            }
+          }
+        }
+        if ((patchedData.paidAmount == null || patchedData.paidAmount! <= 0) &&
+            patchedData.gross != null &&
+            patchedData.gross! > 0) {
+          patchedData = patchedData.copyWith(
+            paidAmount: patchedData.gross,
+            extractionWarnings: <String>[
+              ...patchedData.extractionWarnings,
+              'Paid amount defaulted to gross (no payment evidence found)',
+            ],
+          );
+        }
+      }
+      ocrFallbackStopwatch.stop();
 
       debugPrint('SCAN_RESULT success');
       totalStopwatch.stop();
+      debugPrint(
+        'SCAN_BOTTLENECK mode=$mode model=$effectiveModel '
+        'settings_ms=${settingsStopwatch.elapsedMilliseconds} '
+        'prep_ms=${prepStopwatch.elapsedMilliseconds} '
+        'api_ms=${primaryStopwatch.elapsedMilliseconds} '
+        'parse_ms=${parseStopwatch.elapsedMilliseconds} '
+        'post_ms=${postProcessStopwatch.elapsedMilliseconds} '
+        'ocr_fallback_ms=${ocrFallbackStopwatch.elapsedMilliseconds} '
+        'total_ms=${totalStopwatch.elapsedMilliseconds} '
+        'payload_bytes=${aiImageBytes.length} prompt_len=${prompt.length}',
+      );
       debugPrint(
           'SCAN_API_CALLS count=$apiCalls mode=$mode model=$effectiveModel');
       debugPrint('SCAN_TIMING total_ms=${totalStopwatch.elapsedMilliseconds}');
@@ -826,11 +870,6 @@ Property-business classification rules (applies when business profile indicates 
         notes = _sanitizeNotes(notes);
       }
 
-      // Phase 1: Head/category extraction is intentionally disabled.
-      const String? category = null;
-      const double? categoryConfidence = null;
-      const String? categoryReason = null;
-
       // ---- Numbers ----
       double? vat =
           parseLooseDouble(json['vat'] ?? json['vat_amount'] ?? json['tax']);
@@ -862,13 +901,13 @@ Property-business classification rules (applies when business profile indicates 
       // Keep paid_amount separate from gross to preserve partial/rounded payments.
       final hasVatNet = vat != null && net != null;
       final grossConsistentWithVatNet =
-          gross != null && hasVatNet && (gross - (vat! + net!)).abs() <= 1.0;
+          gross != null && hasVatNet && (gross - (vat + net)).abs() <= 1.0;
       if (rawTotalPayable != null && rawTotalPayable > 0) {
         if (gross == null || gross <= 0) {
           gross = rawTotalPayable;
         } else {
           final rawConsistentWithVatNet =
-              hasVatNet && (rawTotalPayable - (vat! + net!)).abs() <= 1.0;
+              hasVatNet && (rawTotalPayable - (vat + net)).abs() <= 1.0;
           final payableCloseToGross = (gross - rawTotalPayable).abs() <= 1.0 ||
               (gross - rawTotalPayable).abs() <=
                   (gross.abs() * 0.08).clamp(1.0, 50.0);
@@ -907,16 +946,19 @@ Property-business classification rules (applies when business profile indicates 
           paidAmount = paidFromContext;
         }
       }
+      if ((paidAmount == null || paidAmount <= 0) &&
+          notes != null &&
+          notes.trim().isNotEmpty) {
+        final paidFromNotes = _extractPaidAmountByRegex(notes);
+        if (paidFromNotes != null && paidFromNotes > 0) {
+          paidAmount = paidFromNotes;
+        }
+      }
 
       // If payable/gross is still missing but payment total is explicit,
       // use payment total as gross fallback.
       if ((gross == null || gross <= 0) && paymentTotal > 0) {
         gross = paymentTotal;
-      }
-
-      // If paid amount is missing, default paid = gross.
-      if (paidAmount == null && gross != null) {
-        paidAmount = gross;
       }
 
       // Net must be invoice net (gross - VAT), never derived from paid amount.
@@ -932,9 +974,6 @@ Property-business classification rules (applies when business profile indicates 
           date: date,
           invoiceNumber: invoiceNumber,
           supplier: supplier,
-          category: category,
-          categoryConfidence: categoryConfidence,
-          categoryReason: categoryReason,
           vat: vat,
           gross: gross,
           paidAmount: paidAmount,
@@ -1180,7 +1219,7 @@ Rules:
       caseSensitive: false,
     );
     final nextLineCandidateRegex = RegExp(
-      r'^[A-Z0-9][A-Z0-9 /_-]{3,40}$',
+      r'(?:total\s*to\s*pay|amount\s*paid|amt\s*paid|paid|pd|payd|pald|paymt|paid\s*cash|paid\s*card|card\s*payment|cash\s*payment|visa\s*debit\s*sale|mastercard)\s*[:#-]?\s*(?:gbp|Â£|\$)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)',
       caseSensitive: false,
     );
     final invoiceOnlyLineRegex = RegExp(
@@ -1247,55 +1286,6 @@ Rules:
     return null;
   }
 
-  static String? _extractInvoiceNumberDeterministic(String? text) {
-    if (text == null) return null;
-    final lines = text
-        .split(RegExp(r'[\r\n]+'))
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-    if (lines.isEmpty) return null;
-
-    final labelRegex = RegExp(
-      r'(?:(?:invoice|invoce|invoie|invoic|inv0ice|inv)\s*(?:no|ne|nr|num|number|#))',
-      caseSensitive: false,
-    );
-    final sameLineRegex = RegExp(
-      r'(?:(?:invoice|invoce|invoie|invoic|inv0ice|inv)\s*(?:no|ne|nr|num|number|#))\s*[:#-]*\s*([A-Z0-9][A-Z0-9/_-]{2,40})',
-      caseSensitive: false,
-    );
-    final blockedLineRegex = RegExp(
-      r'(vat\s*no|company\s*no|route|pod|tel|phone|account\s*no|customer\s*ref)',
-      caseSensitive: false,
-    );
-
-    for (var i = 0; i < lines.length; i++) {
-      final line = lines[i];
-      if (!labelRegex.hasMatch(line)) continue;
-      if (blockedLineRegex.hasMatch(line)) continue;
-
-      final same = sameLineRegex.firstMatch(line)?.group(1)?.trim();
-      final sanitizedSame = _sanitizeInvoiceNumber(same);
-      if (_isLikelyInvoiceNumberCandidate(sanitizedSame)) {
-        return sanitizedSame;
-      }
-
-      if (i + 1 < lines.length) {
-        final next = lines[i + 1];
-        if (blockedLineRegex.hasMatch(next)) continue;
-        final m = RegExp(r'^([A-Z0-9][A-Z0-9/_-]{2,40})$', caseSensitive: false)
-            .firstMatch(next);
-        final nextValue = m?.group(1)?.trim();
-        final sanitizedNext = _sanitizeInvoiceNumber(nextValue);
-        if (_isLikelyInvoiceNumberCandidate(sanitizedNext)) {
-          return sanitizedNext;
-        }
-      }
-    }
-
-    return null;
-  }
-
   static String? _normalizeInvoiceCandidate(String? value) {
     if (value == null) return null;
     final cleaned = value.trim();
@@ -1333,7 +1323,7 @@ Rules:
   static double? _extractPaidAmountByRegex(String text) {
     final normalized = text.replaceAll('\n', ' ');
     final candidateRegex = RegExp(
-      r'(?:total\s*to\s*pay|amount\s*paid|amt\s*paid|paid|pd|payd|pald|paymt|paid\s*cash|paid\s*card|card\s*payment|cash\s*payment|visa\s*debit\s*sale|mastercard)\s*[:#-]?\s*(?:gbp|£)?\s*([0-9]+(?:\.[0-9]{1,2})?)',
+      r'(?:total\s*to\s*pay|amount\s*paid|amt\s*paid|paid|pd|payd|pald|paymt|paid\s*cash|paid\s*card|card\s*payment|cash\s*payment|visa\s*debit\s*sale|mastercard)\s*[:#-]?\s*(?:gbp|Â£|\$)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)',
       caseSensitive: false,
     );
 
@@ -1344,7 +1334,7 @@ Rules:
     var bestScore = -1;
 
     for (final m in matches) {
-      final amount = double.tryParse(m.group(1) ?? '');
+      final amount = parseLooseDouble(m.group(1));
       if (amount == null || amount <= 0) continue;
 
       final start = m.start;
@@ -1386,17 +1376,6 @@ Rules:
     }
 
     return bestAmount;
-  }
-
-  static double? _extractBalanceDueByRegex(String text) {
-    final normalized = text.replaceAll('\n', ' ');
-    final dueRegex = RegExp(
-      r'(?:balance\s*due|amount\s*due|outstanding)\s*[:#-]?\s*(?:gbp|Â£)?\s*([0-9]+(?:\.[0-9]{1,2})?)',
-      caseSensitive: false,
-    );
-    final match = dueRegex.firstMatch(normalized);
-    if (match == null) return null;
-    return double.tryParse(match.group(1)!);
   }
 
   static Future<_OcrSnapshot?> _extractOcrSnapshotFromImagePath(
@@ -1485,49 +1464,13 @@ Rules:
     return false;
   }
 
-  static bool _amountsAreReasonable(ReceiptData data) {
+  static bool _isFastCriticalValid(ReceiptData data) {
+    final hasDate = data.date != null;
+    final supplier = data.supplier?.trim() ?? '';
+    final hasSupplier = supplier.isNotEmpty;
     final gross = data.gross;
-    final vat = data.vat;
-    final net = data.net;
-    final paid = data.paidAmount;
-    if (gross == null || gross <= 0) return false;
-    if (vat != null && gross + 0.01 < vat) return false;
-    if (net != null && net < -0.01) return false;
-    if (paid != null && paid > gross * 1.25) return false;
-    if (paid != null && paid < 0) return false;
-    if (vat != null && net != null && (gross - (vat + net)).abs() > 1.5) {
-      return false;
-    }
-    return true;
-  }
-
-  static ReceiptData _mergeFastAmountsWithRescue(
-    ReceiptData primary,
-    ReceiptData rescue,
-  ) {
-    final primaryOk = _amountsAreReasonable(primary);
-    final rescueOk = _amountsAreReasonable(rescue);
-    if (!rescueOk) return primary;
-
-    final shouldReplace = !primaryOk ||
-        (primary.gross != null &&
-            rescue.gross != null &&
-            (rescue.gross! - primary.gross!).abs() > 1.0);
-    if (!shouldReplace) return primary;
-
-    final mergedWarnings = <String>{
-      ...primary.extractionWarnings,
-      ...rescue.extractionWarnings,
-      'Fast amount rescue applied',
-    }.toList();
-
-    return primary.copyWith(
-      vat: rescue.vat ?? primary.vat,
-      gross: rescue.gross ?? primary.gross,
-      paidAmount: rescue.paidAmount ?? primary.paidAmount,
-      net: rescue.net ?? primary.net,
-      extractionWarnings: mergedWarnings,
-    );
+    final hasGross = gross != null && gross > 0;
+    return hasDate && hasSupplier && hasGross;
   }
 
   static ReceiptData _mergePrimaryWithRescue(
@@ -1547,11 +1490,6 @@ Rules:
       supplier: (primary.supplier?.trim().isNotEmpty ?? false)
           ? primary.supplier
           : rescue.supplier,
-      category: (primary.category?.trim().isNotEmpty ?? false)
-          ? primary.category
-          : rescue.category,
-      categoryConfidence:
-          primary.categoryConfidence ?? rescue.categoryConfidence,
       vat: primary.vat ?? rescue.vat,
       gross: primary.gross ?? rescue.gross,
       paidAmount: primary.paidAmount ?? rescue.paidAmount,
@@ -1569,8 +1507,6 @@ Rules:
     required Uint8List imageBytes,
     String imageMimeType = 'image/jpeg',
     String? ocrText,
-    String? businessNature,
-    String? businessDescription,
     int timeoutSeconds = 18,
   }) async {
     try {
@@ -1583,10 +1519,6 @@ Rules:
         ),
       );
 
-      final context = [
-        businessNature?.trim() ?? '',
-        businessDescription?.trim() ?? '',
-      ].where((v) => v.isNotEmpty).join(' | ');
       final ocrHint = (ocrText?.trim().isNotEmpty ?? false)
           ? '\nOCR text hint (may be noisy):\n${ocrText!.trim()}'
           : '';
@@ -1594,7 +1526,6 @@ Rules:
       final prompt = '''
 Rescue extraction mode for low-sharp receipt images.
 Goal: recover missing critical fields with conservative confidence.
-${context.isEmpty ? '' : 'Business profile context: $context'}
 
 Return strict JSON only:
 {
@@ -1723,146 +1654,56 @@ $ocrHint
     }
   }
 
-  static String _buildFastPrompt({
-    required String businessContextLine,
-    String? userHint,
-  }) {
-    final contextLine = businessContextLine.isEmpty
-        ? ''
-        : 'Business profile context: $businessContextLine\n';
-    final hint = (userHint?.trim().isNotEmpty ?? false)
-        ? '\n- User hint: ${userHint!.trim()}'
-        : '';
-    final lowerCtx = businessContextLine.toLowerCase();
-    final isPropertyBusiness = lowerCtx.contains('property') &&
-        (lowerCtx.contains('renovat') ||
-            lowerCtx.contains('residential') ||
-            lowerCtx.contains('buy') ||
-            lowerCtx.contains('sell'));
-    final propertyGuide = isPropertyBusiness
-        ? '\n- Property classification rules:\n$_propertyBusinessClassificationGuide'
-        : '';
-    final specialRulesBlock = _buildDynamicSpecialInstructionsBlock(
-      businessContextLine: businessContextLine,
-      includePropertyRules: isPropertyBusiness,
-      userHint: userHint,
-    );
-    return '''
-JSON only:
-{"date":"YYYY-MM-DD or null","invoice_number":"string or null","supplier":"string or null","vat":"number or null","gross":"number or null","paid_amount":"number or null","payment_context":"string or null","net":"number or null","raw_subtotal_before_discounts":"number or null","discount_lines":"array","raw_total_payable":"number or null","payment_methods":"array","currency":"ISO-3 string","is_foreign_currency":"boolean","notes":"string or null","extraction_warnings":"array"}
-${contextLine}
-SPECIAL HANDLING RULES:
-$specialRulesBlock
-
-Rules:
-- Extract values exactly as visible; do not perform math.
-- UK date normalization: DD/MM/YYYY, DD/MM/YY, DD MMM YY/YYYY -> YYYY-MM-DD.
-- invoice_number must be tied to an explicit invoice label only: Invoice No, Invoice Number, Inv No, Inv #, Tax Invoice No, Document No, Bill No, Doc Ref (including OCR typos like Invoce/Invoice Ne).
-- If no explicit invoice label is visible, set invoice_number=null.
-- Never use numbers from merchant/auth/payment/card/AID/PAN/ICC/reference lines as invoice_number.
-- For discount receipts, gross and raw_total_payable must be final payable amount (TOTAL TO PAY/AMOUNT DUE), not pre-discount total.
-- If invoice shows both full total and remaining balance (e.g. "Total to Pay 1200" and "To pay on completion a further 80"), set gross/raw_total_payable=1200 and paid_amount=1120; do not set gross=80.
-- Set paid_amount only when explicit payment evidence exists (card/cash/payment line or handwritten paid total). Otherwise null.
-- Include tender lines in payment_methods when visible.
-- Convert money fields to plain numbers (strip symbols/commas).
-- Detect currency symbol and return ISO code in currency; set is_foreign_currency=true for non-GBP, else false and default currency=GBP.
-- Use business profile as primary intent; merchant type alone is not sufficient.
-- If business context is property-focused, apply property-focused accounting intent first.
-- notes must be a short purchased-items summary only (comma-separated, max ~8 words), never supplier/date/payment text.
-- If at least two item lines are visible, do not return notes as null.
-$propertyGuide
-$hint
-''';
-  }
 
   static int _fastTimeoutForModel(String model) {
     final m = model.toLowerCase();
-    if (m.contains('pro') || m.contains('preview')) return 22;
-    if (m.contains('3.5')) return 16;
-    if (m.contains('2.5-flash')) return 12;
+    if (m.contains('pro') || m.contains('preview')) return 28;
+    if (m.contains('3.5')) return 24;
+    if (m.contains('2.5-flash')) return 16;
     return 14;
   }
 
-  static String _resolveModelForMode({
-    required String configuredModel,
+  static String _resolveModelForMode(
+    String configuredModel, {
     required bool fastMode,
-  }) {
-    if (!fastMode) return configuredModel;
-    final lower = configuredModel.toLowerCase();
-    if (lower.contains('pro') || lower.contains('preview')) {
-      return 'gemini-2.5-flash-lite';
-    }
-    return configuredModel;
+  }) =>
+      configuredModel;
+
+  static bool _isSupportedModelOption(String model) {
+    final m = model.trim().toLowerCase();
+    if (m.isEmpty) return false;
+    if (m.startsWith('gemini-1.') || m.startsWith('gemini-2.0')) return false;
+    return true;
   }
 
-  static String _buildQualityPromptCompact({
-    required String businessContextLine,
-    String? userHint,
+  static void _logLongDebug(String label, String text) {
+    if (!kDebugMode) return;
+    const chunkSize = 900;
+    if (text.length <= chunkSize) {
+      debugPrint('$label: $text');
+      return;
+    }
+    debugPrint('$label (len=${text.length})');
+    for (var i = 0; i < text.length; i += chunkSize) {
+      final end = (i + chunkSize < text.length) ? i + chunkSize : text.length;
+      debugPrint('${label}_PART ${i ~/ chunkSize + 1}: ${text.substring(i, end)}');
+    }
+  }
+
+  static void _logPromptComposition({
+    required String mode,
+    required String schemaBlock,
+    required String rulesBlock,
+    required String hintBlock,
   }) {
-    final contextLine = businessContextLine.isEmpty
-        ? ''
-        : 'Business profile context: $businessContextLine\n';
-    final hint = (userHint?.trim().isNotEmpty ?? false)
-        ? 'User hint: ${userHint!.trim()}\n'
-        : '';
-    final lowerCtx = businessContextLine.toLowerCase();
-    final isPropertyBusiness = lowerCtx.contains('property') &&
-        (lowerCtx.contains('renovat') ||
-            lowerCtx.contains('residential') ||
-            lowerCtx.contains('buy') ||
-            lowerCtx.contains('sell'));
-    final propertyGuide = isPropertyBusiness
-        ? '\nProperty classification rules:\n$_propertyBusinessClassificationGuide\n'
-        : '';
-    final specialRulesBlock = _buildDynamicSpecialInstructionsBlock(
-      businessContextLine: businessContextLine,
-      includePropertyRules: isPropertyBusiness,
-      userHint: userHint,
+    if (!kDebugMode) return;
+    final schemaLen = schemaBlock.length;
+    final rulesLen = rulesBlock.length;
+    final hintLen = hintBlock.length;
+    final totalSections = schemaLen + rulesLen + hintLen;
+    debugPrint(
+      'SCAN_PROMPT_SECTIONS mode=$mode schema_len=$schemaLen rules_len=$rulesLen hint_len=$hintLen sections_total_len=$totalSections',
     );
-    return '''
-You extract structured data from a UK receipt/invoice image. Return ONLY valid JSON.
-${contextLine}
-SPECIAL HANDLING RULES:
-$specialRulesBlock
-
-${hint}${propertyGuide}Schema:
-{"date":"YYYY-MM-DD or null","invoice_number":"string or null","supplier":"string or null","vat":"number or null","gross":"number or null","paid_amount":"number or null","payment_context":"string or null","net":"number or null","notes":"string or null","extraction_warnings":"array"}
-Rules:
-- Invoice number is critical. Scan full page (header/body/footer/boxes/margins).
-- Invoice labels: Invoice No/Number/Inv No/Inv #/Document No/Bill No/Ref No/Doc Ref (incl OCR typos: Invoce/Invoice Ne).
-- Exclude non-invoice IDs: VAT No, Company No, Tel/Phone, Account No, Customer Ref, Route, POD, AID, Auth Code, PAN, Merchant, ICC.
-- Date normalize to YYYY-MM-DD. Parse UK-first: DD/MM/YYYY, DD/MM/YY, DD MMM YY/YYYY.
-- Money fields must be plain numbers.
-- Gross = final payable amount. If discounts/savings exist, use TOTAL TO PAY/AMOUNT DUE (post-discount).
-- If both full total and outstanding balance are shown, gross is the full invoice total (not outstanding remainder).
-- paid_amount only from explicit payment evidence (payment/tender lines).
-- net is net-before-VAT where visible; do not derive from paid_amount.
-- Use business profile as primary intent; merchant type alone is not sufficient.
-- If business context is property-focused, apply property-focused accounting intent first.
-- Notes must summarize purchased items only.
-- Do not output personal names, addresses, email, phone.
-- If a field is unclear, return null (no guessing).
-- If invoice number missing/unclear, set null and include "Invoice number not detected" in extraction_warnings.
-''';
-  }
-
-  static String _buildDynamicSpecialInstructionsBlock({
-    required String businessContextLine,
-    required bool includePropertyRules,
-    required String? userHint,
-  }) {
-    final lines = <String>[
-      '- Use business profile as primary intent signal: $businessContextLine',
-      '- Merchant type alone is insufficient; prioritize line-item meaning and transaction intent.',
-    ];
-    final hint = userHint?.trim();
-    if (hint != null && hint.isNotEmpty) {
-      lines.add('- User scan hint: $hint');
-    }
-    if (includePropertyRules) {
-      lines.add('- Property-focused business context applies.');
-    }
-    return lines.join('\n');
   }
 
   static DateTime? _parseFlexibleUkDate(String raw) {

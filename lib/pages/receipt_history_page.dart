@@ -320,7 +320,7 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
       if (project.id == id) return project.name;
     }
     if (widget.project?.id == id) return widget.project!.name;
-    return 'Operation $id';
+    return 'Account $id';
   }
 
   double get _totalGross =>
@@ -422,13 +422,13 @@ class _ReceiptHistoryPageState extends State<ReceiptHistoryPage> {
                 initialValue: _selectedProjectId,
                 isExpanded: true,
                 decoration: const InputDecoration(
-                  labelText: 'Operation filter',
+                  labelText: 'Account filter',
                   prefixIcon: Icon(Icons.business_center_outlined),
                 ),
                 items: [
                   const DropdownMenuItem<int?>(
                     value: null,
-                    child: Text('All operations'),
+                    child: Text('All accounts'),
                   ),
                   ..._projects.map(
                     (project) => DropdownMenuItem<int?>(

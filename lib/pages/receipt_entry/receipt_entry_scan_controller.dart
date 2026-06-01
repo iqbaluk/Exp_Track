@@ -35,10 +35,6 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
       );
       return;
     }
-    final businessNature = profile.businessNature.trim();
-    final businessDescription = profile.businessDescription.trim();
-    _subcategoryToMain = const {};
-    _headKeywordPhrases = const {};
     final hint = _scanHintController.text.trim();
 
     _setActiveScanMode(scanMode);
@@ -51,12 +47,12 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
       result = await GeminiService.scanReceipt(
         _imageBytes!,
         imagePath: _imageFilePath,
-        businessNature: businessNature,
-        businessDescription: businessDescription,
         scanModeOverride: scanMode,
         qualityUserHint: hint.isEmpty ? null : hint,
-        fastPreparedBytes:
-            scanMode == GeminiService.scanModeFast ? _fastScanBytes : null,
+        fastPreparedBytes: (scanMode == GeminiService.scanModeFast ||
+                scanMode == GeminiService.scanModeFastV2)
+            ? _fastScanBytes
+            : null,
       );
     } finally {
       if (mounted) {
@@ -78,33 +74,42 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
       return;
     }
 
-    // Always reset scan-populated fields first to avoid mixing stale values
-    // from previous/manual entries when current scan misses a field.
-    _mutateEntryState(() {
-      _selectedDate = null;
-      _invoiceNumberController.clear();
-      _supplierController.clear();
-      _selectedCategory = _resolveDefaultCategory(fallback: _selectedCategory);
-      _vatController.clear();
-      _grossController.clear();
-      _paidController.clear();
-      _netController.clear();
-      _notesController.clear();
-      _lastCategoryConfidence = null;
-      _categoryNeedsReview = false;
-      _categoryReviewConfirmed = false;
-    });
-
-    final effectiveData = result.data!;
+    final uiApplyStopwatch = Stopwatch()..start();
+    var effectiveData = result.data!;
+    if (_looksLikeBuyerNameVariant(
+      effectiveData.supplier,
+      profile.clientName,
+    )) {
+      final warnings = <String>[
+        ...effectiveData.extractionWarnings,
+        'Supplier matched buyer name variant; cleared for manual review',
+      ];
+      effectiveData = ReceiptData(
+        date: effectiveData.date,
+        invoiceNumber: effectiveData.invoiceNumber,
+        supplier: null,
+        vat: effectiveData.vat,
+        gross: effectiveData.gross,
+        paidAmount: effectiveData.paidAmount,
+        net: effectiveData.net,
+        rawNotes: effectiveData.rawNotes,
+        extractionWarnings: warnings,
+      );
+      debugPrint(
+        'SCAN_SUPPLIER_GUARD mode=$scanMode buyer_match=true buyer="${profile.clientName}"',
+      );
+    }
     debugPrint(
-      'SCAN_PARSED date=${effectiveData.date?.toIso8601String()} invoice="${effectiveData.invoiceNumber}" supplier="${effectiveData.supplier}" subcat="${effectiveData.category}" conf=${effectiveData.categoryConfidence} reason="${effectiveData.categoryReason}" gross=${effectiveData.gross} vat=${effectiveData.vat} paid=${effectiveData.paidAmount} net=${effectiveData.net}',
+      'SCAN_PARSED date=${effectiveData.date?.toIso8601String()} invoice="${effectiveData.invoiceNumber}" supplier="${effectiveData.supplier}" gross=${effectiveData.gross} vat=${effectiveData.vat} paid=${effectiveData.paidAmount} net=${effectiveData.net}',
     );
 
     final categoryMessage = _applyScanData(
       effectiveData,
       mergeOnly: false,
-      businessNature: businessNature,
-      businessDescription: businessDescription,
+    );
+    uiApplyStopwatch.stop();
+    debugPrint(
+      'SCAN_UI_APPLY mode=$scanMode apply_ms=${uiApplyStopwatch.elapsedMilliseconds}',
     );
     final missing = _missingFieldsAfterScan();
     final warnings = effectiveData.extractionWarnings
@@ -124,10 +129,12 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
       );
       return;
     }
-    final lowConfidence = (_lastCategoryConfidence ?? 100) < 60;
+    final speedHint = scanMode == GeminiService.scanModeFast
+        ? ' If any value looks wrong, tap Quality scan.'
+        : '';
     _showStatus(
-      '$baseMessage$warningSuffix',
-      isError: handwritingWarnings.isNotEmpty || lowConfidence,
+      '$baseMessage$warningSuffix$speedHint',
+      isError: handwritingWarnings.isNotEmpty,
       duration: const Duration(seconds: 8),
     );
   }
@@ -147,8 +154,6 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
   String? _applyScanData(
     ReceiptData data, {
     required bool mergeOnly,
-    String? businessNature,
-    String? businessDescription,
   }) {
     _applyScanStateMutations(
       data: data,
@@ -169,6 +174,20 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
     required VoidCallback onCategoryKept,
   }) {
     _mutateEntryState(() {
+      if (!mergeOnly) {
+        // Reset scan-populated fields in the same mutation to avoid stale data
+        // and reduce extra rebuild work.
+        _selectedDate = null;
+        _invoiceNumberController.clear();
+        _supplierController.clear();
+        _selectedCategory = _resolveDefaultCategory(fallback: _selectedCategory);
+        _vatController.clear();
+        _grossController.clear();
+        _paidController.clear();
+        _netController.clear();
+        _notesController.clear();
+      }
+
       if (data.date != null && (!mergeOnly || _isDateUntouched())) {
         _selectedDate = data.date!;
       }
@@ -209,179 +228,9 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
           onCategoryKept();
         }
       }
-
-      if (suggestion != null && (!mergeOnly || _selectedCategory != null)) {
-        _lastCategoryConfidence = suggestion.confidence;
-        _categoryNeedsReview = suggestion.confidence < 80;
-        _categoryReviewConfirmed = !_categoryNeedsReview;
-      } else {
-        _lastCategoryConfidence = null;
-        _categoryNeedsReview = false;
-        _categoryReviewConfirmed = true;
-      }
     });
   }
 
-  String? _matchConfiguredCategory(String? rawCategory) {
-    if (rawCategory == null) return null;
-    final cleaned = rawCategory.trim();
-    if (cleaned.isEmpty) return null;
-
-    for (final category in _categories) {
-      if (category.toLowerCase() == cleaned.toLowerCase()) {
-        return category;
-      }
-    }
-
-    final loose = cleaned.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
-    for (final category in _categories) {
-      final candidate =
-          category.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
-      if (candidate == loose) return category;
-    }
-    return null;
-  }
-
-  ({String category, double confidence})? _categorySuggestionFromScan(
-    ReceiptData data, {
-    String? businessNature,
-    String? businessDescription,
-  }) {
-    final motorMain = _findMotorTravelMain();
-    if (motorMain != null && _looksLikeMotorExpense(data)) {
-      final confidence =
-          (data.categoryConfidence ?? 82).clamp(70, 100).toDouble();
-      debugPrint(
-        'SCAN_CATEGORY_OVERRIDE reason=contextual_match mapped_main="$motorMain" confidence=$confidence',
-      );
-      return (category: motorMain, confidence: confidence);
-    }
-
-    final raw = data.category?.trim();
-    final keywordMatch = _matchHeadByKeywords(data);
-    final aiConfidenceRaw = (data.categoryConfidence ?? 0).toDouble();
-
-    if (keywordMatch != null &&
-        (keywordMatch.score >= 2 || aiConfidenceRaw < 80)) {
-      final confidence =
-          (70 + (keywordMatch.score * 8)).clamp(70, 96).toDouble();
-      debugPrint(
-        'SCAN_CATEGORY_KEYWORDS matched_head="${keywordMatch.head}" score=${keywordMatch.score} confidence=$confidence',
-      );
-      return (category: keywordMatch.head, confidence: confidence);
-    }
-
-    if (raw != null && raw.isNotEmpty) {
-      final mappedMain = _mapSubcategoryToMain(raw);
-      if (mappedMain != null) {
-        final aiConfidence = (data.categoryConfidence ?? 70).toDouble();
-        final confidence = aiConfidence.clamp(60, 100).toDouble();
-        final otherMain = _findGeneralExpensesMain();
-        if (aiConfidence < 60 && otherMain != null) {
-          debugPrint(
-            'SCAN_CATEGORY_SAFEGUARD low_confidence=$aiConfidence mapped_main="$mappedMain" fallback_main="$otherMain"',
-          );
-          return (
-            category: otherMain,
-            confidence: aiConfidence.clamp(40, 59).toDouble()
-          );
-        }
-        debugPrint(
-          'SCAN_CATEGORY_MAP raw_subcategory="$raw" mapped_main="$mappedMain" confidence=$confidence',
-        );
-        return (category: mappedMain, confidence: confidence);
-      }
-
-      // Graceful fallback if model returns a main head directly.
-      final aiCategory = _matchConfiguredCategory(raw);
-      if (aiCategory != null) {
-        final confidence =
-            (data.categoryConfidence ?? 75).clamp(55, 100).toDouble();
-        return (category: aiCategory, confidence: confidence);
-      }
-    }
-
-    final general = _findGeneralExpensesMain();
-    if (general != null) {
-      final confidence =
-          (data.categoryConfidence ?? 55).clamp(0, 100).toDouble();
-      debugPrint(
-        'SCAN_CATEGORY_MAP raw_subcategory="${data.category}" mapped_main_fallback="$general" confidence=$confidence',
-      );
-      return (category: general, confidence: confidence);
-    }
-    return null;
-  }
-
-  String? _findGeneralExpensesMain() {
-    for (final category in _categories) {
-      final key = category.toLowerCase();
-      if (key.contains('miscellaneous')) {
-        return category;
-      }
-    }
-    for (final category in _categories) {
-      final key = category.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
-      if (key == 'generalexpenses' || key.contains('generalexpense')) {
-        return category;
-      }
-    }
-    for (final category in _categories) {
-      final key = category.toLowerCase();
-      if (key.contains('other')) return category;
-    }
-    return _categories.isNotEmpty ? _categories.first : null;
-  }
-
-  String? _findMotorTravelMain() {
-    for (final category in _categories) {
-      final key = category.toLowerCase();
-      if (key.contains('motor, travel & subsistence') ||
-          key.contains('motor') ||
-          key.contains('travel')) {
-        return category;
-      }
-    }
-    return null;
-  }
-
-  bool _looksLikeMotorExpense(ReceiptData data) {
-    final text = [
-      data.supplier ?? '',
-      data.category ?? '',
-      data.categoryReason ?? '',
-      data.rawNotes ?? '',
-    ].join(' ').toLowerCase();
-    if (text.trim().isEmpty) return false;
-    const strongMotorTerms = [
-      'maserati',
-      'garage',
-      'autocentre',
-      'autocenter',
-      'motor',
-      'steering',
-      'gearbox',
-      'clutch',
-      'brake',
-      'tyre',
-      'tire',
-      'mot',
-      'vehicle repair',
-      'windscreen',
-      'car parts',
-      'engine',
-      'suspension',
-      'exhaust',
-      'battery',
-      'spark plug',
-      'oil filter',
-      'dealership',
-      'auto',
-      'automotive',
-      'mechanic',
-    ];
-    return strongMotorTerms.any(text.contains);
-  }
 
   String _fingerprintBytes(Uint8List? bytes) {
     if (bytes == null || bytes.isEmpty) return 'none';
@@ -393,93 +242,51 @@ extension _ReceiptEntryScanController on _ReceiptEntryPageState {
     return 'len=${bytes.length},sig=$acc';
   }
 
-  String? _mapSubcategoryToMain(String rawSubcategory) {
-    if (_subcategoryToMain.isEmpty) return null;
-    final key = rawSubcategory.trim().toLowerCase();
-    final exact = _subcategoryToMain[key];
-    if (exact != null) return _matchConfiguredCategory(exact);
-
-    final normKey = _normalizeCategoryKey(rawSubcategory);
-    if (normKey.isNotEmpty) {
-      final normExact = _subcategoryToMain[normKey];
-      if (normExact != null) return _matchConfiguredCategory(normExact);
-    }
-
-    final rawTokens = _tokenize(key);
-    if (rawTokens.isEmpty) return null;
-    double bestScore = 0;
-    String? bestMain;
-
-    for (final entry in _subcategoryToMain.entries) {
-      final candidateTokens = _tokenize(entry.key);
-      if (candidateTokens.isEmpty) continue;
-      final overlap = rawTokens.intersection(candidateTokens).length;
-      var score = overlap / rawTokens.length;
-      final candidateKey = entry.key;
-      if (normKey.isNotEmpty && candidateKey.contains(normKey)) {
-        score += 0.25;
-      }
-      if (key.isNotEmpty && candidateKey.contains(key)) {
-        score += 0.15;
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        bestMain = entry.value;
-      }
-    }
-
-    if (bestMain != null && bestScore >= 0.30) {
-      debugPrint(
-        'SCAN_CATEGORY_MAP_FUZZY raw="$rawSubcategory" best_main="$bestMain" score=${bestScore.toStringAsFixed(2)}',
-      );
-      return _matchConfiguredCategory(bestMain);
-    }
-    return null;
-  }
-
-  String _normalizeCategoryKey(String text) {
-    return text.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
-  }
-
-  Set<String> _tokenize(String text) {
-    return text
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
-        .split(' ')
-        .map((t) => t.trim())
-        .where((t) => t.length >= 3)
-        .toSet();
-  }
-
-  ({String head, int score})? _matchHeadByKeywords(ReceiptData data) {
-    if (_headKeywordPhrases.isEmpty) return null;
-    final text = [
-      data.supplier ?? '',
-      data.rawNotes ?? '',
-      data.categoryReason ?? '',
-    ].join(' ').toLowerCase();
-    if (text.trim().isEmpty) return null;
-
-    var bestHead = '';
-    var bestScore = 0;
-    for (final entry in _headKeywordPhrases.entries) {
-      var score = 0;
-      for (final phrase in entry.value) {
-        if (phrase.isEmpty) continue;
-        if (text.contains(phrase)) score++;
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        bestHead = entry.key;
-      }
-    }
-    if (bestHead.isEmpty || bestScore <= 0) return null;
-    final mapped = _matchConfiguredCategory(bestHead);
-    if (mapped == null) return null;
-    return (head: mapped, score: bestScore);
-  }
-
   bool _isDateUntouched() {
     return _selectedDate == null;
+  }
+
+  bool _looksLikeBuyerNameVariant(String? supplier, String buyerName) {
+    final s = _normalizeCompanyText(supplier ?? '');
+    final b = _normalizeCompanyText(buyerName);
+    if (s.isEmpty || b.isEmpty) return false;
+    if (s == b) return true;
+    if (s.length >= 6 && b.length >= 6 && (s.contains(b) || b.contains(s))) {
+      return true;
+    }
+
+    final distance = _levenshteinDistance(s, b);
+    final threshold = (b.length * 0.22).round().clamp(2, 6);
+    return distance <= threshold;
+  }
+
+  String _normalizeCompanyText(String value) {
+    var v = value.toLowerCase();
+    v = v.replaceAll(RegExp(r'\b(ltd|limited|llp|plc|co|company)\b'), ' ');
+    v = v.replaceAll(RegExp(r'[^a-z0-9]'), '');
+    return v.trim();
+  }
+
+  int _levenshteinDistance(String a, String b) {
+    if (a == b) return 0;
+    if (a.isEmpty) return b.length;
+    if (b.isEmpty) return a.length;
+    final prev = List<int>.generate(b.length + 1, (i) => i);
+    final curr = List<int>.filled(b.length + 1, 0);
+    for (var i = 1; i <= a.length; i++) {
+      curr[0] = i;
+      for (var j = 1; j <= b.length; j++) {
+        final cost = a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1) ? 0 : 1;
+        curr[j] = [
+          curr[j - 1] + 1,
+          prev[j] + 1,
+          prev[j - 1] + cost,
+        ].reduce((x, y) => x < y ? x : y);
+      }
+      for (var j = 0; j <= b.length; j++) {
+        prev[j] = curr[j];
+      }
+    }
+    return prev[b.length];
   }
 }

@@ -44,6 +44,7 @@ part 'pages/receipt_entry/receipt_entry_save_controller.dart';
 part 'pages/receipt_entry/receipt_entry_duplicate_dialogs.dart';
 part 'pages/receipt_entry/receipt_entry_scan_controller.dart';
 part 'pages/receipt_entry/receipt_entry_scan_fast_controller.dart';
+part 'pages/receipt_entry/receipt_entry_scan_handwritten_controller.dart';
 part 'pages/receipt_entry/receipt_entry_scan_quality_controller.dart';
 part 'pages/receipt_entry/receipt_entry_view_sections.dart';
 part 'pages/gemini_settings_page.dart';

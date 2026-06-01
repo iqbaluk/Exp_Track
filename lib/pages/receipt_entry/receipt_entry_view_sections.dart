@@ -4,8 +4,11 @@ extension _ReceiptEntryViewSections on _ReceiptEntryPageState {
   Widget _buildScanDebugBadge() {
     final colorScheme = Theme.of(context).colorScheme;
     final telemetry = _lastScanTelemetry!;
-    final modeLabel =
-        telemetry.mode == GeminiService.scanModeFast ? 'Fast' : 'Quality';
+    final modeLabel = telemetry.mode == GeminiService.scanModeFast
+        ? 'Fast'
+        : telemetry.mode == GeminiService.scanModeHandwritten
+            ? 'Handwritten'
+            : 'Quality';
     final statusLabel = telemetry.success ? 'ok' : 'failed';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

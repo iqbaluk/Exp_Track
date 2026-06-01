@@ -8,7 +8,7 @@
 // Schema:
 //   tbl_receipts:
 //     id              INTEGER PRIMARY KEY AUTOINCREMENT
-//     project_id      INTEGER   (links to tbl_projects)
+//     project_id      INTEGER   (links to tbl_accounts)
 //     scan_no         INTEGER UNIQUE  (sequential, starts at 1)
 //     date            TEXT      (YYYY-MM-DD)
 //     invoice_number  TEXT
@@ -301,6 +301,7 @@ class Receipt {
   final double gross;
   final double paidAmount;
   final double net;
+  final String? paymentMode;
   final String? notes;
   final String? photoPath;
   final DateTime createdAt;
@@ -319,6 +320,7 @@ class Receipt {
     required this.gross,
     required this.paidAmount,
     required this.net,
+    this.paymentMode,
     this.notes,
     this.photoPath,
     DateTime? createdAt,
@@ -344,6 +346,7 @@ class Receipt {
       'gross': gross,
       'paid_amount': paidAmount,
       'net': net,
+      'payment_mode': paymentMode ?? '',
       'notes': notes,
       'photo_path': photoPath,
       'created_at': createdAt.toIso8601String(),
@@ -368,6 +371,9 @@ class Receipt {
       paidAmount: (map['paid_amount'] as num?)?.toDouble() ??
           (map['gross'] as num).toDouble(),
       net: (map['net'] as num).toDouble(),
+      paymentMode: ((map['payment_mode'] as String?)?.trim().isEmpty ?? true)
+          ? null
+          : (map['payment_mode'] as String).trim(),
       notes: map['notes'] as String?,
       photoPath: map['photo_path'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String),
@@ -388,6 +394,7 @@ class Receipt {
     double? gross,
     double? paidAmount,
     double? net,
+    String? paymentMode,
     String? notes,
     String? photoPath,
     DateTime? createdAt,
@@ -405,6 +412,7 @@ class Receipt {
       gross: gross ?? this.gross,
       paidAmount: paidAmount ?? this.paidAmount,
       net: net ?? this.net,
+      paymentMode: paymentMode ?? this.paymentMode,
       notes: notes ?? this.notes,
       photoPath: photoPath ?? this.photoPath,
       createdAt: createdAt ?? this.createdAt,
@@ -454,10 +462,10 @@ class Receipt {
 class DatabaseService {
   static const String _dbName = 'receipt_scanner.db';
   static const String _table = 'tbl_receipts';
-  static const String _projectsTable = 'tbl_projects';
+  static const String _projectsTable = 'tbl_accounts';
   static const String _categoriesTable = 'tbl_categories';
   static const String _companyTable = 'tbl_company_profile';
-  static const int _dbVersion = 35;
+  static const int _dbVersion = 37;
   static const String _combinedReportView = 'vw_receipt_project_matrix';
   static const List<String> fixedOperationHeads = <String>[
     'Purchases',
@@ -620,6 +628,7 @@ class DatabaseService {
             gross REAL NOT NULL DEFAULT 0,
             paid_amount REAL NOT NULL DEFAULT 0,
             net REAL NOT NULL DEFAULT 0,
+            payment_mode TEXT NOT NULL DEFAULT '',
             notes TEXT,
             photo_path TEXT,
             created_at TEXT NOT NULL,
@@ -850,6 +859,20 @@ class DatabaseService {
         if (oldV < 35) {
           await _migrateOperationHeadsV35(db);
         }
+        if (oldV < 36) {
+          // Reset historical receipt rows before introducing payment mode.
+          await db.delete(_table);
+          try {
+            await db.execute(
+              'ALTER TABLE $_table ADD COLUMN payment_mode TEXT NOT NULL DEFAULT \'\'',
+            );
+          } catch (_) {
+            // Column may already exist.
+          }
+        }
+        if (oldV < 37) {
+          await _migrateProjectsTableToAccountsV37(db);
+        }
       },
     );
 
@@ -977,6 +1000,10 @@ class DatabaseService {
       _dbMigrateDropReceiptCategoryV34(db);
   static Future<void> _migrateOperationHeadsV35(DatabaseExecutor db) async =>
       _dbMigrateOperationHeadsV35(db);
+  static Future<void> _migrateProjectsTableToAccountsV37(
+    DatabaseExecutor db,
+  ) async =>
+      _dbMigrateProjectsTableToAccountsV37(db);
 
   static Future<int> _insertDefaultProject(Database db) async =>
       _dbInsertDefaultProject(db);

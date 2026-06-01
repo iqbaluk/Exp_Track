@@ -241,7 +241,7 @@ class ExportService {
     // Column order: Category before Supplier (for filtering),
     // BOTH dates included so accountant sees the full picture.
     csv.writeln(
-      'ScanNo,InvoiceNo,ExpenseCategory,InvoiceDate,ScanDate,Supplier,Net,VAT,Gross,Notes,PhotoFile',
+      'ScanNo,InvoiceNo,ExpenseCategory,InvoiceDate,ScanDate,Supplier,Net,VAT,Gross,PaymentMode,Notes,PhotoFile',
     );
 
     for (final r in receipts) {
@@ -256,6 +256,7 @@ class ExportService {
         r.net.toStringAsFixed(2),
         r.vat.toStringAsFixed(2),
         r.gross.toStringAsFixed(2),
+        _csvEscape(r.paymentMode ?? ''),
         _csvEscape(r.notes ?? ''),
         _csvEscape(photoFile),
       ].join(','));
@@ -385,7 +386,7 @@ class ExportService {
     tag = tag.replaceAll(RegExp(r'[<>:"/\\|?*]'), '');
     tag = tag.replaceAll(RegExp(r'\s+'), '');
     tag = tag.replaceAll(RegExp(r'[^A-Za-z0-9\-.]'), '');
-    if (tag.isEmpty) return 'operation';
+    if (tag.isEmpty) return 'account';
     if (tag.length > 30) return tag.substring(0, 30);
     return tag;
   }
@@ -542,7 +543,7 @@ class ExportService {
 
       final result = await Share.shareXFiles(
         filesToShare,
-        subject: 'Combined operations report - ${_friendlyLabel(range)}',
+        subject: 'Combined accounts report - ${_friendlyLabel(range)}',
       );
       if (result.status == ShareResultStatus.unavailable) {
         return ExportResult.failure('Sharing not available on this device.');
@@ -920,7 +921,7 @@ class ExportService {
     final projectTag = _filenameTag(project.name);
     final path = p.join(
       exportDir.path,
-      'operation_summary_${projectTag}_${range.label}_${basisTag}_$ts.csv',
+      'account_summary_${projectTag}_${range.label}_${basisTag}_$ts.csv',
     );
     await File(path).writeAsString(csv.toString());
     return path;
@@ -1020,7 +1021,7 @@ class ExportService {
     final projectTag = _filenameTag(project.name);
     final path = p.join(
       exportDir.path,
-      'operation_summary_${projectTag}_${range.label}_${basisTag}_$ts.pdf',
+      'account_summary_${projectTag}_${range.label}_${basisTag}_$ts.pdf',
     );
     await File(path).writeAsBytes(await pdf.save());
     return path;

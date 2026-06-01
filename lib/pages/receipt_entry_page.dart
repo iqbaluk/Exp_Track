@@ -45,18 +45,18 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
   bool _canWriteData = false;
   bool _isAutoAmountUpdate = false;
   bool _showScanHint = false;
-  double? _lastCategoryConfidence;
-  bool _categoryNeedsReview = false;
-  bool _categoryReviewConfirmed = false;
   ScanTelemetry? _lastScanTelemetry;
+  String? _selectedPaymentMode;
+  bool _paymentModePromptShown = false;
+  List<String> _scanModelOptions = List<String>.from(GeminiService.selectableModels);
+  String? _selectedScanModel;
+  bool _savingScanModel = false;
 
   String? _statusMessage;
   bool _statusIsError = false;
 
   List<Receipt> _recentReceipts = [];
   List<String> _categories = DatabaseService.defaultCategories;
-  Map<String, String> _subcategoryToMain = {};
-  Map<String, List<String>> _headKeywordPhrases = {};
   int _totalReceiptCount = 0;
 
   @override
@@ -73,15 +73,95 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
     _loadCategories();
     _loadRecent();
     _loadWriteAccess();
+    _loadScanModelPicker();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _ensurePaymentModeSelected();
+    });
     if (_imageBytes != null && _fastScanBytes == null) {
       _prepareFastScanCache();
     }
+  }
+
+  Future<void> _ensurePaymentModeSelected() async {
+    if (!mounted || _paymentModePromptShown) return;
+    _paymentModePromptShown = true;
+    final selected = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Select payment mode'),
+        content: const Text('Choose how this receipt will be paid.'),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx, 'Bank'),
+            child: const Text('Bank'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'Cash'),
+            child: const Text('Cash'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    final mode = (selected == 'Bank' || selected == 'Cash') ? selected : 'Cash';
+    setState(() => _selectedPaymentMode = mode);
+    _showStatus('Payment mode: $mode');
   }
 
   Future<void> _loadWriteAccess() async {
     final canWrite = await ActivationLicenseService.canWriteData();
     if (!mounted) return;
     setState(() => _canWriteData = canWrite);
+  }
+
+  Future<void> _loadScanModelPicker() async {
+    try {
+      final settings = await GeminiService.loadSettings();
+      final options = await GeminiService.savedModelOptions();
+      if (!mounted) return;
+      setState(() {
+        _scanModelOptions = options.isEmpty
+            ? List<String>.from(GeminiService.selectableModels)
+            : List<String>.from(options);
+        if (!_scanModelOptions.contains(settings.model)) {
+          _scanModelOptions.add(settings.model);
+        }
+        _selectedScanModel = settings.model;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _scanModelOptions = List<String>.from(GeminiService.selectableModels);
+        _selectedScanModel = GeminiService.defaultModel;
+      });
+    }
+  }
+
+  Future<void> _onScanModelChanged(String? model) async {
+    if (model == null || model.trim().isEmpty) return;
+    if (_savingScanModel) return;
+    setState(() {
+      _selectedScanModel = model;
+      _savingScanModel = true;
+    });
+    try {
+      final settings = await GeminiService.loadSettings();
+      await GeminiService.saveSettings(
+        apiKey: settings.hasSavedApiKey ? settings.apiKey : '',
+        model: model,
+        scanMode: settings.scanMode,
+      );
+      if (!mounted) return;
+      _showStatus('Scan model set to $model');
+    } catch (e) {
+      if (!mounted) return;
+      _showStatus('Could not change model: $e', isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _savingScanModel = false);
+      }
+    }
   }
 
   @override
@@ -373,9 +453,6 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
       _netController.clear();
       _notesController.clear();
       _scanHintController.clear();
-      _lastCategoryConfidence = null;
-      _categoryNeedsReview = false;
-      _categoryReviewConfirmed = false;
       _imageBytes = null;
       _fastScanBytes = null;
       _imageFileName = null;
@@ -693,69 +770,185 @@ class _ReceiptEntryPageState extends State<ReceiptEntryPage> {
                           'Tell AI exactly what Fast scan missed and where it appears on invoice.',
                     ),
                   ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: (_selectedScanModel != null &&
+                          _scanModelOptions.contains(_selectedScanModel))
+                      ? _selectedScanModel
+                      : null,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Gemini model',
+                    prefixIcon: const Icon(Icons.tune),
+                    suffixIcon: _savingScanModel
+                        ? const Padding(
+                            padding: EdgeInsets.all(10),
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : null,
+                  ),
+                  items: _scanModelOptions
+                      .map(
+                        (m) => DropdownMenuItem<String>(
+                          value: m,
+                          child: Text(
+                            m,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged:
+                      (_isScanning || _savingScanModel) ? null : _onScanModelChanged,
+                ),
                 const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: (_imageBytes == null || _isScanning)
-                            ? null
-                            : _scanWithGeminiQuality,
-                        icon: _isScanning &&
-                                _activeScanMode ==
-                                    GeminiService.scanModeAccurate
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.high_quality),
-                        label: Text(
-                          _isScanning &&
-                                  _activeScanMode ==
-                                      GeminiService.scanModeAccurate
-                              ? 'Scanning...'
-                              : 'Quality',
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 410;
+                    final buttonHeight = compact ? 50.0 : 54.0;
+                    final iconSize = compact ? 18.0 : 20.0;
+                    final fontSize = compact ? 13.0 : 14.0;
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: buttonHeight,
+                            child: ElevatedButton(
+                              onPressed: (_imageBytes == null || _isScanning)
+                                  ? null
+                                  : _scanWithGeminiQuality,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF2563EB),
+                                foregroundColor: Colors.white,
+                                disabledBackgroundColor:
+                                    colorScheme.surfaceContainerHigh,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 8),
+                                textStyle: TextStyle(
+                                  fontSize: fontSize,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              child: _isScanning &&
+                                      _activeScanMode ==
+                                          GeminiService.scanModeAccurate
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.high_quality,
+                                          size: iconSize,
+                                        ),
+                                        const SizedBox(width: 5),
+                                        const Text('Quality'),
+                                      ],
+                                    ),
+                            ),
+                          ),
                         ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: colorScheme.secondaryContainer,
-                          foregroundColor: colorScheme.onSecondaryContainer,
-                          disabledBackgroundColor:
-                              colorScheme.surfaceContainerHigh,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: SizedBox(
+                            height: buttonHeight,
+                            child: ElevatedButton(
+                              onPressed: (_imageBytes == null || _isScanning)
+                                  ? null
+                                  : _scanWithGeminiHandwritten,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFEAB308),
+                                foregroundColor: const Color(0xFF1F2937),
+                                disabledBackgroundColor:
+                                    colorScheme.surfaceContainerHigh,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 8),
+                                textStyle: TextStyle(
+                                  fontSize: fontSize,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              child: _isScanning &&
+                                      _activeScanMode ==
+                                          GeminiService.scanModeHandwritten
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Color(0xFF1F2937),
+                                      ),
+                                    )
+                                  : Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.draw, size: iconSize),
+                                        const SizedBox(width: 5),
+                                        const Text('By_hand'),
+                                      ],
+                                    ),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: (_imageBytes == null || _isScanning)
-                            ? null
-                            : _scanWithGeminiFast,
-                        icon: _isScanning &&
-                                _activeScanMode == GeminiService.scanModeFast
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.bolt),
-                        label: Text(
-                          _isScanning &&
-                                  _activeScanMode == GeminiService.scanModeFast
-                              ? 'Scanning...'
-                              : 'Fast',
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: SizedBox(
+                            height: buttonHeight,
+                            child: ElevatedButton(
+                              onPressed: (_imageBytes == null || _isScanning)
+                                  ? null
+                                  : _scanWithGeminiFast,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF16A34A),
+                                foregroundColor: Colors.white,
+                                disabledBackgroundColor:
+                                    colorScheme.surfaceContainerHigh,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 8),
+                                textStyle: TextStyle(
+                                  fontSize: fontSize,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              child: _isScanning &&
+                                      _activeScanMode ==
+                                          GeminiService.scanModeFastV2
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.bolt, size: iconSize),
+                                        const SizedBox(width: 5),
+                                        const Text('Fast_v2'),
+                                      ],
+                                    ),
+                            ),
+                          ),
                         ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: colorScheme.tertiaryContainer,
-                          foregroundColor: colorScheme.onTertiaryContainer,
-                          disabledBackgroundColor:
-                              colorScheme.surfaceContainerHigh,
-                        ),
-                      ),
-                    ),
-                  ],
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 4),
                 Text(

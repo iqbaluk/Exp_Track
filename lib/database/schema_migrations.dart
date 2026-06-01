@@ -128,14 +128,8 @@ Future<void> _dbCreateCombinedReportView(DatabaseExecutor db) async {
 }
 
 Future<void> _dbCreateCategoriesTable(Database db) async {
-  await db.execute('''
-      CREATE TABLE IF NOT EXISTS ${DatabaseService._categoriesTable} (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    ''');
+  // Categories are de-scoped from current schema.
+  return;
 }
 
 Future<void> _dbCreateCompanyProfileTable(Database db) async {
@@ -154,198 +148,28 @@ Future<void> _dbCreateCompanyProfileTable(Database db) async {
 }
 
 Future<void> _dbSeedDefaultCategories(DatabaseExecutor db) async {
-  final now = DateTime.now().toIso8601String();
-  for (final name in DatabaseService.defaultCategories) {
-    await db.insert(
-      DatabaseService._categoriesTable,
-      {
-        'name': name,
-        'created_at': now,
-        'updated_at': now,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
-  }
+  // Categories are de-scoped from current schema.
+  return;
 }
 
 Future<void> _dbMigrateToBusinessExpenseCategories(DatabaseExecutor db) async {
-  final now = DateTime.now().toIso8601String();
-  const legacyToNew = <String, String>{
-    'Material': 'Purchases',
-    'Subcontractor': 'Subcontractor',
-    'Utility Bills': 'Utility',
-    'Travel': 'Travelling',
-    'Insurance': 'Fees',
-    'Other': 'Sundries',
-  };
-
-  for (final entry in legacyToNew.entries) {
-    await db.rawUpdate(
-      '''
-        UPDATE ${DatabaseService._table}
-        SET category = ?, updated_at = ?
-        WHERE LOWER(TRIM(category)) = LOWER(?)
-        ''',
-      [entry.value, now, entry.key],
-    );
-  }
-
-  const businessV9Categories = <String>[
-    'Purchases',
-    'Subcontractor',
-    'Commissions',
-    'Advertisement',
-    'Salary',
-    'Rent',
-    'Rates',
-    'Utility',
-    'Travelling',
-    'Subsistence',
-    'Telephone',
-    'Computer',
-    'Fees',
-    'Repair',
-    'Sundries',
-  ];
-
-  for (final category in businessV9Categories) {
-    await db.rawUpdate(
-      '''
-        UPDATE ${DatabaseService._table}
-        SET category = ?, updated_at = ?
-        WHERE LOWER(TRIM(category)) = LOWER(?)
-        ''',
-      [category, now, category],
-    );
-  }
-
-  final normalizedDefaults =
-      businessV9Categories.map((c) => c.toLowerCase()).toList();
-  final placeholders = List.filled(normalizedDefaults.length, '?').join(',');
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE TRIM(COALESCE(category, '')) = ''
-         OR LOWER(TRIM(category)) NOT IN ($placeholders)
-      ''',
-    ['Sundries', now, ...normalizedDefaults],
-  );
-
-  await db.delete(DatabaseService._categoriesTable);
-  final seedNow = DateTime.now().toIso8601String();
-  for (final name in businessV9Categories) {
-    await db.insert(
-      DatabaseService._categoriesTable,
-      {
-        'name': name,
-        'created_at': seedNow,
-        'updated_at': seedNow,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
-  }
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigrateToCondensedMainCategories(DatabaseExecutor db) async {
-  final now = DateTime.now().toIso8601String();
-  const oldToMain = <String, String>{
-    'Purchases': 'Purchases',
-    'Subcontractor': 'Staff & Contractors',
-    'Commissions': 'Professional Fees',
-    'Advertisement': 'Marketing',
-    'Salary': 'Staff & Contractors',
-    'Rent': 'Rent & Rates',
-    'Rates': 'Rent & Rates',
-    'Utility': 'Utilities',
-    'Premises & Utilities': 'Rent & Rates',
-    'Travelling': 'Travel',
-    'Subsistence': 'Travel',
-    'Telephone': 'Office Admin',
-    'Computer': 'Office Admin',
-    'Fees': 'Professional Fees',
-    'Repair': 'Repair & Maintenance',
-    'Sundries': 'Sundries',
-    'Insurance': 'Insurance',
-    'Charity': 'Donations & Charity',
-    'Charity Donation': 'Donations & Charity',
-    'Donations & Charity': 'Donations & Charity',
-  };
-
-  for (final entry in oldToMain.entries) {
-    await db.rawUpdate(
-      '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-      ''',
-      [entry.value, now, entry.key],
-    );
-  }
-
-  final normalizedDefaults =
-      DatabaseService.defaultCategories.map((c) => c.toLowerCase()).toList();
-  final placeholders = List.filled(normalizedDefaults.length, '?').join(',');
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE TRIM(COALESCE(category, '')) = ''
-         OR LOWER(TRIM(category)) NOT IN ($placeholders)
-      ''',
-    ['Sundries', now, ...normalizedDefaults],
-  );
-
-  await db.delete(DatabaseService._categoriesTable);
-  await _dbSeedDefaultCategories(db);
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigratePremisesUtilitiesSplit(DatabaseExecutor db) async {
-  final now = DateTime.now().toIso8601String();
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-      ''',
-    ['Rent & Rates', now, 'Premises & Utilities'],
-  );
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-      ''',
-    ['Utilities', now, 'Utility'],
-  );
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-      ''',
-    ['Rent & Rates', now, 'Rent'],
-  );
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-      ''',
-    ['Rent & Rates', now, 'Rates'],
-  );
-
-  await db.delete(
-    DatabaseService._categoriesTable,
-    where: 'LOWER(TRIM(name)) = LOWER(?)',
-    whereArgs: ['Premises & Utilities'],
-  );
-  await _dbSeedDefaultCategories(db);
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigrateToPnlCategoriesV15(DatabaseExecutor db) async {
-  await db.delete(DatabaseService._categoriesTable);
-  await _dbSeedDefaultCategories(db);
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbRenameDefaultProjectToOperation(DatabaseExecutor db) async {
@@ -360,90 +184,13 @@ Future<void> _dbRenameDefaultProjectToOperation(DatabaseExecutor db) async {
 }
 
 Future<void> _dbMigrateCategoryPolicyV17(DatabaseExecutor db) async {
-  final now = DateTime.now().toIso8601String();
-
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-    ''',
-    ['Fee', now, 'Bank Charges and Interest'],
-  );
-
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) IN (LOWER(?), LOWER(?))
-    ''',
-    ['General Expenses', now, 'Depreciation', 'Bad Debts'],
-  );
-
-  await db.delete(
-    DatabaseService._categoriesTable,
-    where: 'LOWER(TRIM(name)) IN (LOWER(?), LOWER(?), LOWER(?))',
-    whereArgs: [
-      'Bank Charges and Interest',
-      'Depreciation',
-      'Bad Debts',
-    ],
-  );
-
-  await _dbSeedDefaultCategories(db);
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigrateCategoryPolicyV18(DatabaseExecutor db) async {
-  final now = DateTime.now().toIso8601String();
-
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) IN (LOWER(?), LOWER(?), LOWER(?), LOWER(?))
-    ''',
-    [
-      'Fee & Charges',
-      now,
-      'Fee',
-      'Fees',
-      'Professional Fees',
-      'Bank Charges and Interest',
-    ],
-  );
-
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) IN (LOWER(?), LOWER(?), LOWER(?), LOWER(?))
-    ''',
-    [
-      'Other Exp',
-      now,
-      'Maintenance',
-      'General Expenses',
-      'Depreciation',
-      'Bad Debts',
-    ],
-  );
-
-  await db.delete(
-    DatabaseService._categoriesTable,
-    where:
-        'LOWER(TRIM(name)) IN (LOWER(?),LOWER(?),LOWER(?),LOWER(?),LOWER(?),LOWER(?),LOWER(?))',
-    whereArgs: [
-      'Fee',
-      'Fees',
-      'Professional Fees',
-      'Maintenance',
-      'General Expenses',
-      'Depreciation',
-      'Bad Debts',
-    ],
-  );
-
-  await _dbSeedDefaultCategories(db);
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigrateCompanyNameToMicrofastV19(DatabaseExecutor db) async {
@@ -459,27 +206,8 @@ Future<void> _dbMigrateCompanyNameToMicrofastV19(DatabaseExecutor db) async {
 }
 
 Future<void> _dbMigratePurchaseCategoryRenameV21(DatabaseExecutor db) async {
-  final now = DateTime.now().toIso8601String();
-
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) IN (LOWER(?), LOWER(?))
-    ''',
-    ['Material Purchase', now, 'Purchase', 'Purchases'],
-  );
-
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._categoriesTable}
-      SET name = ?, updated_at = ?
-      WHERE LOWER(TRIM(name)) IN (LOWER(?), LOWER(?))
-    ''',
-    ['Material Purchase', now, 'Purchase', 'Purchases'],
-  );
-
-  await _dbSeedDefaultCategories(db);
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigrateCompanyClassificationGuidanceV22(
@@ -495,71 +223,13 @@ Future<void> _dbMigrateCompanyClassificationGuidanceV22(
 }
 
 Future<void> _dbMigrateSubcategoryPruneV24(DatabaseExecutor db) async {
-  final now = DateTime.now().toIso8601String();
-
-  const rewrites = <String, String>{
-    'Materials & Purchases - Miscellaneous Purchases':
-        'Materials & Purchases - Materials Purchased',
-    'Materials & Purchases - Carriage':
-        'Materials & Purchases - Materials Purchased',
-    'Materials & Purchases - Transport Insurance':
-        'Materials & Purchases - Materials Imported',
-    'Materials & Purchases - Closing Stock':
-        'Materials & Purchases - Opening Stock',
-    'Labour & Staffing - Cost of Sales Labour':
-        'Labour & Staffing - Productive Labour',
-    'Labour & Staffing - Staff Salaries': 'Labour & Staffing - Gross Wages',
-    'Labour & Staffing - Wages Casual': 'Labour & Staffing - Wages Regular',
-    'Labour & Staffing - Employers Pensions':
-        'Labour & Staffing - Employers NI',
-    'Premises & Utilities - Oil': 'Premises & Utilities - Other Heating Costs',
-    'Motor, Travel & Subsistence - Vehicle Licences':
-        'Motor, Travel & Subsistence - Vehicle Insurance',
-    'Motor, Travel & Subsistence - Mileage Claims':
-        'Motor, Travel & Subsistence - Travelling',
-    'Motor, Travel & Subsistence - Overseas Travelling':
-        'Motor, Travel & Subsistence - Travelling',
-    'Professional & Financial Charges - Bank Interest Paid':
-        'Professional & Financial Charges - Bank Charges',
-    'Professional & Financial Charges - Currency Charges':
-        'Professional & Financial Charges - Bank Charges',
-    'Professional & Financial Charges - HP Interest':
-        'Professional & Financial Charges - Loan Interest Paid',
-    'Professional & Financial Charges - Exchange Rate Variance':
-        'Professional & Financial Charges - Other Interest Charges',
-    'Professional & Financial Charges - Factoring Charges':
-        'Professional & Financial Charges - Credit Charges',
-    'Other, Non-cash & Exceptional - Depreciation':
-        'Other, Non-cash & Exceptional - Plant and Machinery Depreciation',
-    'Other, Non-cash & Exceptional - Furniture and Fittings Depreciation':
-        'Other, Non-cash & Exceptional - Plant and Machinery Depreciation',
-    'Other, Non-cash & Exceptional - Office Equipment Depreciation':
-        'Other, Non-cash & Exceptional - Plant and Machinery Depreciation',
-    'Other, Non-cash & Exceptional - Bad Debt Provision':
-        'Other, Non-cash & Exceptional - Bad Debt Write Off',
-  };
-
-  for (final entry in rewrites.entries) {
-    await db.rawUpdate(
-      '''
-        UPDATE ${DatabaseService._table}
-        SET category = ?, updated_at = ?
-        WHERE LOWER(TRIM(category)) = LOWER(?)
-      ''',
-      [entry.value, now, entry.key],
-    );
-  }
-
-  await db.delete(DatabaseService._categoriesTable);
-  await _dbSeedDefaultCategories(db);
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigrateCategoryModelV25(DatabaseExecutor db) async {
-  // Refresh category seed set to the new 8-main / subcategory taxonomy.
-  // Receipt rows keep their saved main category values; this migration
-  // updates the category catalog used by scan guidance and category manager.
-  await db.delete(DatabaseService._categoriesTable);
-  await _dbSeedDefaultCategories(db);
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigrateCategoryKeywordsV26(DatabaseExecutor db) async {
@@ -568,67 +238,13 @@ Future<void> _dbMigrateCategoryKeywordsV26(DatabaseExecutor db) async {
 }
 
 Future<void> _dbMigrateMainHeadOnlyV27(DatabaseExecutor db) async {
-  final now = DateTime.now().toIso8601String();
-
-  // Collapse any stored receipt category like "Main - Sub" -> "Main".
-  final receiptRows = await db.query(
-    DatabaseService._table,
-    columns: ['id', 'category'],
-  );
-  for (final row in receiptRows) {
-    final id = row['id'];
-    final category = (row['category'] as String?)?.trim() ?? '';
-    if (id == null || category.isEmpty) continue;
-    final sep = category.indexOf(' - ');
-    if (sep <= 0) continue;
-    final main = category.substring(0, sep).trim();
-    if (main.isEmpty) continue;
-    await db.update(
-      DatabaseService._table,
-      {'category': main, 'updated_at': now},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-  }
-
-  // Rebuild category catalog with main heads only.
-  await db.delete(DatabaseService._categoriesTable);
-  await _dbSeedDefaultCategories(db);
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigrateRenameMiscellaneousV28(DatabaseExecutor db) async {
-  final now = DateTime.now().toIso8601String();
-  const oldName = 'Other, Non-cash & Exceptional';
-  const newName = 'Miscellaneous';
-
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._table}
-      SET category = ?, updated_at = ?
-      WHERE LOWER(TRIM(category)) = LOWER(?)
-    ''',
-    [newName, now, oldName],
-  );
-
-  await db.rawUpdate(
-    '''
-      UPDATE ${DatabaseService._categoriesTable}
-      SET name = ?, updated_at = ?
-      WHERE LOWER(TRIM(name)) = LOWER(?)
-    ''',
-    [newName, now, oldName],
-  );
-
-  // Ensure only expected main heads remain after rename.
-  await db.delete(
-    DatabaseService._categoriesTable,
-    where:
-        'LOWER(TRIM(name)) NOT IN (${List.filled(DatabaseService.mainCategories.length, '?').join(',')})',
-    whereArgs:
-        DatabaseService.mainCategories.map((e) => e.toLowerCase()).toList(),
-  );
-
-  await _dbSeedDefaultCategories(db);
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigrateClearMiscKeywordsV29(DatabaseExecutor db) async {
@@ -637,31 +253,8 @@ Future<void> _dbMigrateClearMiscKeywordsV29(DatabaseExecutor db) async {
 }
 
 Future<void> _dbMigrateDropCategoryKeywordsV30(DatabaseExecutor db) async {
-  final columns = await db
-      .rawQuery('PRAGMA table_info(${DatabaseService._categoriesTable})');
-  final hasKeywords = columns.any(
-    (row) => (row['name'] as String?)?.toLowerCase() == 'keywords',
-  );
-  if (!hasKeywords) return;
-
-  await db.execute('''
-    CREATE TABLE ${DatabaseService._categoriesTable}_v30 (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  ''');
-  await db.execute('''
-    INSERT OR IGNORE INTO ${DatabaseService._categoriesTable}_v30 (
-      id, name, created_at, updated_at
-    )
-    SELECT id, name, created_at, updated_at
-    FROM ${DatabaseService._categoriesTable}
-  ''');
-  await db.execute('DROP TABLE ${DatabaseService._categoriesTable}');
-  await db.execute(
-      'ALTER TABLE ${DatabaseService._categoriesTable}_v30 RENAME TO ${DatabaseService._categoriesTable}');
+  // Legacy category migration is intentionally disabled.
+  return;
 }
 
 Future<void> _dbMigrateDropCompanyClassificationGuidanceV31(
@@ -909,4 +502,20 @@ Future<int> _dbInsertDefaultProject(Database db) async {
 
 Future<int> _dbDefaultProjectId(Database db) async {
   return _dbInsertDefaultProject(db);
+}
+
+Future<void> _dbMigrateProjectsTableToAccountsV37(DatabaseExecutor db) async {
+  const oldTable = 'tbl_projects';
+  final rows = await db.rawQuery(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)",
+    [oldTable, DatabaseService._projectsTable],
+  );
+  final names = rows
+      .map((r) => (r['name'] as String?)?.trim().toLowerCase() ?? '')
+      .toSet();
+  if (names.contains(DatabaseService._projectsTable.toLowerCase())) return;
+  if (!names.contains(oldTable)) return;
+  await db.execute(
+    'ALTER TABLE $oldTable RENAME TO ${DatabaseService._projectsTable}',
+  );
 }

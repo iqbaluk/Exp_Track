@@ -26,8 +26,6 @@ Future<({ReceiptData data, int apiCalls})> _applyQualityModePostProcess({
   required String effectiveModel,
   required Uint8List aiImageBytes,
   required String aiMimeType,
-  required String? businessNature,
-  required String? businessDescription,
   required int apiCalls,
 }) async {
   var patchedData = data;
@@ -93,8 +91,6 @@ Future<({ReceiptData data, int apiCalls})> _applyQualityModePostProcess({
             imageBytes: aiImageBytes,
             imageMimeType: aiMimeType,
             ocrText: null,
-            businessNature: businessNature,
-            businessDescription: businessDescription,
             timeoutSeconds: 7,
           )
         : Future<ReceiptData?>.value(null);

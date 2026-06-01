@@ -6,7 +6,6 @@ import 'ocr_rule_extractors.dart';
 class FastReceiptPipeline {
   static Future<ReceiptData?> tryExtract({
     required String imagePath,
-    required List<String> categories,
   }) async {
     final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
     try {
@@ -29,7 +28,6 @@ class FastReceiptPipeline {
       final paid = OcrRuleExtractors.extractPaid(text);
       final vat = OcrRuleExtractors.extractVat(text);
       final notes = OcrRuleExtractors.summarizeLineItemsFromLines(lines);
-      final category = _mapCategory(text, categories);
 
       final usable = OcrRuleExtractors.isUsableFastExtraction(
         date: date,
@@ -43,8 +41,6 @@ class FastReceiptPipeline {
         date: date,
         invoiceNumber: invoice,
         supplier: supplier,
-        category: category,
-        categoryConfidence: category == null ? null : 72,
         vat: vat,
         gross: gross,
         paidAmount: paid,
@@ -57,51 +53,5 @@ class FastReceiptPipeline {
     } finally {
       await recognizer.close();
     }
-  }
-
-  static String? _mapCategory(String text, List<String> categories) {
-    final lower = text.toLowerCase();
-
-    bool has(List<String> words) => words.any(lower.contains);
-
-    final feeAndCharges =
-        _find(categories, const ['fee & charges', 'fee', 'charges']);
-    final otherExp = _find(categories, const ['other exp']);
-    final purchases = _find(categories, const ['purchases', 'purchase']);
-    final travel = _find(categories, const ['travel']);
-    final motor = _find(categories, const ['motor']);
-
-    if (has(const ['bank fee', 'service charge', 'processing fee'])) {
-      return feeAndCharges;
-    }
-    if (has(const [
-      'tesco',
-      'asda',
-      'sainsbury',
-      'aldi',
-      'lidl',
-      'waitrose',
-      'morrisons'
-    ])) {
-      return otherExp ?? purchases;
-    }
-    if (has(const ['fuel', 'petrol', 'diesel'])) {
-      return motor ?? travel ?? purchases;
-    }
-    if (has(const ['parts', 'wholesale', 'trade supply'])) {
-      return purchases;
-    }
-
-    return null;
-  }
-
-  static String? _find(List<String> categories, List<String> candidates) {
-    for (final option in categories) {
-      final lower = option.toLowerCase();
-      for (final candidate in candidates) {
-        if (lower.contains(candidate)) return option;
-      }
-    }
-    return null;
   }
 }

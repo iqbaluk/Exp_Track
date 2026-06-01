@@ -38,7 +38,7 @@ class _ReportsHubPageState extends State<ReportsHubPage> {
       if (!mounted) return;
       setState(() => _loading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not load operations: $e')),
+        SnackBar(content: Text('Could not load accounts: $e')),
       );
     }
   }
@@ -109,13 +109,13 @@ class _ReportsHubPageState extends State<ReportsHubPage> {
               initialValue: _selectedProjectId,
               isExpanded: true,
               decoration: const InputDecoration(
-                labelText: 'Operation scope',
+                labelText: 'Account scope',
                 prefixIcon: Icon(Icons.business_center_outlined),
               ),
               items: [
                 const DropdownMenuItem<int?>(
                   value: null,
-                  child: Text('All operations'),
+                  child: Text('All accounts'),
                 ),
                 ..._projects.map(
                   (project) => DropdownMenuItem<int?>(
@@ -166,7 +166,7 @@ class _ReportsHubPageState extends State<ReportsHubPage> {
                   border: Border.all(color: colorScheme.outlineVariant),
                 ),
                 child: Text(
-                  'No operations found. Create operations first, then open reports.',
+                  'No accounts found. Create accounts first, then open reports.',
                   style: TextStyle(color: colorScheme.onSurfaceVariant),
                 ),
               ),
